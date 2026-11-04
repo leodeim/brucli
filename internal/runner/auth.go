@@ -298,3 +298,20 @@ func signEdgeGrid(req *http.Request, auth collection.Auth) error {
 	req.Header.Set("Authorization", header+"signature="+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 	return nil
 }
+
+// EffectiveAuth is the auth a request uses after inheritance, and where it came from.
+func EffectiveAuth(r *collection.Request) (collection.Auth, string) {
+	if r.Auth.Mode != "inherit" {
+		return r.Auth, "request"
+	}
+	chain := r.Chain()
+	for i := len(chain) - 1; i >= 0; i-- {
+		if a := chain[i].Defaults.Auth; a.Mode != "inherit" {
+			if i == 0 {
+				return a, "collection"
+			}
+			return a, "folder " + chain[i].Name
+		}
+	}
+	return collection.Auth{Mode: "none"}, "collection"
+}
