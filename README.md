@@ -32,6 +32,24 @@ brucli reads and writes [Bruno](https://www.usebruno.com) collections in both Op
 
 ## Install
 
+Install the latest release on macOS or Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/leodeim/brucli/main/scripts/install.sh | sh
+```
+
+The script detects your OS and CPU, verifies the SHA-256 checksum, and installs to `~/.local/bin`. To choose another directory:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/leodeim/brucli/main/scripts/install.sh | INSTALL_DIR=/usr/local/bin sh
+```
+
+The directory must be writable. If `~/.local/bin` is missing from your `PATH`, add this to your shell profile:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 Download a binary from the [latest release](https://github.com/leodeim/brucli/releases/latest):
 
 | Platform | Binary |
@@ -48,6 +66,8 @@ You can also install with Go 1.26 or newer:
 ```sh
 go install github.com/leodeim/brucli@latest
 ```
+
+Go installs to `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is unset. Add that directory to your `PATH`.
 
 ## Update
 
