@@ -160,7 +160,9 @@ type rawAssertion struct {
 
 type rawAction struct {
 	Type     string `yaml:"type"`
+	Phase    string `yaml:"phase"`
 	Selector struct {
+		Method     string `yaml:"method"`
 		Expression string `yaml:"expression"`
 	} `yaml:"selector"`
 	Variable struct {
@@ -169,6 +171,11 @@ type rawAction struct {
 	} `yaml:"variable"`
 	Description yaml.Node `yaml:"description"`
 	Disabled    bool      `yaml:"disabled"`
+}
+
+func (a rawAction) supported() bool {
+	return a.Type == "set-variable" && (a.Phase == "" || a.Phase == "after-response") &&
+		(a.Selector.Method == "" || a.Selector.Method == "jsonq")
 }
 
 func readRequest(path string) (*Request, error) {
@@ -253,7 +260,7 @@ func requestFromNode(path string, doc *yaml.Node) (*Request, error) {
 		})
 	}
 	for _, a := range raw.Runtime.Actions {
-		if a.Type != "set-variable" {
+		if !a.supported() {
 			continue
 		}
 		r.Actions = append(r.Actions, Action{

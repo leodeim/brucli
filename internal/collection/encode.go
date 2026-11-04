@@ -3,6 +3,7 @@ package collection
 import (
 	"bytes"
 	"cmp"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,13 +24,14 @@ var (
 	blockKeys = []string{"info", "http", "graphql", "grpc", "websocket", "mock", "routes", "runtime", "settings", "examples", "docs", "items", "request"}
 )
 
-// fresh returns the file's current YAML, or cached when it cannot be read; saving into it keeps
-// what Bruno or git changed in keys brucli does not model since the file was loaded.
-func fresh(path string, cached *yaml.Node) *yaml.Node {
-	if doc, err := readYAML(path); err == nil {
-		return doc
+// fresh reads the current file so external changes to unmodeled keys survive.
+// Only a new file may fall back to the cached document; read errors must stop a save.
+func fresh(path string, cached *yaml.Node) (*yaml.Node, error) {
+	doc, err := readYAML(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return deepCopy(cached), nil
 	}
-	return deepCopy(cached)
+	return doc, err
 }
 
 // Save writes the request back to its file. Keys brucli does not model stay as they are on disk.
@@ -37,7 +39,11 @@ func (r *Request) Save() error {
 	if filepath.Ext(r.Path) == ".bru" {
 		return r.saveBru()
 	}
-	r.doc = fresh(r.Path, r.doc)
+	doc, err := fresh(r.Path, r.doc)
+	if err != nil {
+		return err
+	}
+	r.doc = doc
 	set(child(r.doc, "info", requestKeys), "name", scalar(r.Name), infoKeys)
 	kind := r.Kind
 	if kind == "" {
@@ -79,7 +85,11 @@ func (r *Request) Save() error {
 	}
 	set(runtime, "scripts", mergedScriptsNode(originalScripts, r.Scripts), runtimeKeys)
 	set(runtime, "assertions", assertionsNode(r.Assertions), runtimeKeys)
-	set(runtime, "actions", actionsNode(r.Actions), runtimeKeys)
+	var originalActions *yaml.Node
+	if i := lookup(runtime, "actions"); i >= 0 {
+		originalActions = runtime.Content[i+1]
+	}
+	set(runtime, "actions", mergedActionsNode(originalActions, r.Actions), runtimeKeys)
 	if len(runtime.Content) == 0 {
 		set(r.doc, "runtime", nil, requestKeys)
 	}
@@ -155,7 +165,11 @@ func (e *Environment) Save() error {
 	if filepath.Ext(e.Path) == ".bru" {
 		return e.saveBru()
 	}
-	e.doc = fresh(e.Path, e.doc)
+	doc, err := fresh(e.Path, e.doc)
+	if err != nil {
+		return err
+	}
+	e.doc = doc
 	set(e.doc, "name", scalar(e.Name), envKeys)
 	var items []*yaml.Node
 	for _, v := range e.Vars {
@@ -399,6 +413,28 @@ func actionsNode(as []Action) *yaml.Node {
 		items = append(items, n)
 	}
 	return sequence(items)
+}
+
+func mergedActionsNode(original *yaml.Node, actions []Action) *yaml.Node {
+	updates := actionsNode(actions)
+	if original == nil || original.Kind != yaml.SequenceNode {
+		return updates
+	}
+	var pending []*yaml.Node
+	if updates != nil {
+		pending = updates.Content
+	}
+	var entries []*yaml.Node
+	for _, entry := range original.Content {
+		var raw rawAction
+		if err := entry.Decode(&raw); err != nil || !raw.supported() {
+			entries = append(entries, entry)
+		} else if len(pending) > 0 {
+			entries = append(entries, pending[0])
+			pending = pending[1:]
+		}
+	}
+	return sequence(append(entries, pending...))
 }
 
 func mapping() *yaml.Node { return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"} }

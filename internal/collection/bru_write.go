@@ -96,7 +96,11 @@ func (r *Request) bruBlocks() map[string]string {
 		pairs[1].value = "ws"
 	}
 	blocks[method] = bruDictionary(pairs)
-	blocks["headers"] = bruFields(r.Headers)
+	headerBlock := "headers"
+	if r.Kind == "grpc" {
+		headerBlock = "metadata"
+	}
+	blocks[headerBlock] = bruFields(r.Headers)
 	var query, path []KV
 	for _, parameter := range r.Params {
 		if parameter.Type == "path" {
