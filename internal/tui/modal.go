@@ -154,12 +154,12 @@ func (e *envEditor) key(m *Model, msg tea.KeyMsg) tea.Cmd {
 		}
 		focus := map[string]int{"enter": 1, "n": 0}[k]
 		if cur.Secret {
-			fields := []*field{textField("Name", cur.Name), secretField("Value", m.s.Secrets[e.env.Name][cur.Name], !m.reveal)}
+			fields := []*field{textField("Name", cur.Name), secretField("Value", m.s.SecretValues(e.env)[cur.Name], !m.reveal)}
 			return m.openForm("Secret "+cur.Name, "Secret values stay in this session and are never written to the file.", fields, focus, func(v []string) tea.Cmd {
-				m.s.SetSecret(cur.Name, v[1])
+				m.s.SetEnvironmentSecret(e.env, cur.Name, v[1])
 				if n := strings.TrimSpace(v[0]); n != "" && n != cur.Name {
 					cur.Name = n
-					m.s.SetSecret(n, v[1])
+					m.s.SetEnvironmentSecret(e.env, n, v[1])
 					changed()
 				}
 				return nil
@@ -178,10 +178,10 @@ func (e *envEditor) key(m *Model, msg tea.KeyMsg) tea.Cmd {
 		if cur != nil {
 			cur.Secret = !cur.Secret
 			if cur.Secret {
-				m.s.SetSecret(cur.Name, cur.Value)
+				m.s.SetEnvironmentSecret(e.env, cur.Name, cur.Value)
 				cur.Value = ""
 			} else {
-				cur.Value = m.s.Secrets[e.env.Name][cur.Name]
+				cur.Value = m.s.SecretValues(e.env)[cur.Name]
 			}
 			changed()
 		}
@@ -219,7 +219,7 @@ func (e *envEditor) view(m *Model, w, h int) string {
 		value := markVars(v.Value)
 		if v.Secret {
 			value = stMuted.Render("secret ")
-			if s, ok := m.s.Secrets[e.env.Name][v.Name]; ok && s != "" {
+			if s, ok := m.s.SecretValues(e.env)[v.Name]; ok && s != "" {
 				value += strings.Repeat("•", min(len(s), 8))
 			} else {
 				value += stWarn.Render("not set")
@@ -524,13 +524,13 @@ func (rm *runModal) view(m *Model, w, h int) string {
 		case res.Err != nil:
 			mark, detail = stErr.Render("✗"), stErr.Render(res.Err.Error())
 		default:
-			detail = statusStyle(res.Response.Status).Render(fmt.Sprint(res.Response.Status)) + stMuted.Render(" "+elapsed(res.Response.Duration))
+			detail = responseStyle(res.Response).Render(fmt.Sprint(res.Response.Status)) + stMuted.Render(" "+elapsed(res.Response.Duration))
 			if res.Failed() {
 				mark = stErr.Render("✗")
 				detail += "  " + stErr.Render(firstFailure(res))
 			}
 		}
-		lines = append(lines, line(i == rm.cursor, fmt.Sprintf("%s %s %-28s %s", mark, methodTag(r.Method), r.Name, detail)))
+		lines = append(lines, line(i == rm.cursor, fmt.Sprintf("%s %s %-28s %s", mark, methodTag(r.MethodLabel()), r.Name, detail)))
 	}
 	state := fmt.Sprintf("%d/%d done", len(st.results), len(st.reqs))
 	if st.active {

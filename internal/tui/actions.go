@@ -213,6 +213,7 @@ func buildActions() []*action {
 
 		{menu: "Environment", name: "Choose environment…", keys: []string{"e"}, do: (*Model).pickEnv},
 		{menu: "Environment", name: "Choose global environment…", do: (*Model).pickGlobalEnv},
+		{menu: "Environment", name: "Edit global environment", when: func(m *Model) bool { return m.s.GlobalEnv != nil }, do: func(m *Model) tea.Cmd { m.modal = &envEditor{env: m.s.GlobalEnv}; return nil }},
 		{menu: "Environment", name: "Edit environment", keys: []string{"E"},
 			when: func(m *Model) bool { return m.s.Env != nil }, do: (*Model).openEnvEditor},
 		{menu: "Environment", name: "Variables in scope", keys: []string{"v"}, do: (*Model).openVars},

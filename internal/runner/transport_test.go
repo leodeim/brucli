@@ -61,6 +61,32 @@ func TestExplicitProxyAndBypass(t *testing.T) {
 	}
 }
 
+func TestHTTPSProxy(t *testing.T) {
+	proxy := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Proxy-Authorization") != "Basic dXNlcjpwYXNz" {
+			t.Error("missing HTTPS proxy credentials")
+		}
+		io.WriteString(w, "secure proxy")
+	}))
+	proxy.EnableHTTP2 = true
+	proxy.StartTLS()
+	defer proxy.Close()
+	s, r := authRequest(t, "http://example.test/", collection.Auth{Mode: "none"})
+	s.Client.Transport.(*http.Transport).TLSClientConfig = &tls.Config{NextProtos: []string{"h2", "http/1.1"}}
+	path := filepath.Join(s.Collection.Dir, "proxy-ca.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: proxy.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(proxy.URL)
+	u.User = url.UserPassword("user", "pass")
+	if err := s.ConfigureTransport(TransportOptions{ProxyURL: u.String(), CACert: path}); err != nil {
+		t.Fatal(err)
+	}
+	if res := s.Execute(context.Background(), r); res.Err != nil || string(res.Response.Body) != "secure proxy" {
+		t.Fatalf("HTTPS proxy response: %+v", res)
+	}
+}
+
 func TestSOCKS4Proxy(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

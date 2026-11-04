@@ -44,13 +44,18 @@ type Session struct {
 	Secrets map[string]map[string]string
 	Runtime map[string]any
 	// Process is process.env: the OS environment overlaid by the collection's .env.
-	Process     map[string]string
-	Client      *http.Client
-	Transport   TransportOptions
-	rootCAs     *x509.CertPool
-	tokens      map[string]*oauth2.Token
-	Interactive bool
-	OpenBrowser func(string) error
+	Process           map[string]string
+	Client            *http.Client
+	Transport         TransportOptions
+	rootCAs           *x509.CertPool
+	tokens            map[string]*oauth2.Token
+	Interactive       bool
+	OpenBrowser       func(string) error
+	StreamInteractive bool
+	StreamMessages    int
+	StreamTimeout     time.Duration
+	StreamInput       <-chan collection.Message
+	OnStream          func(*script.Response)
 }
 
 // NewSession starts a session on c with environment env (may be nil).
@@ -68,14 +73,15 @@ func NewSession(c *collection.Collection, env *collection.Environment, insecure 
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	return &Session{
-		Collection: c,
-		Env:        env,
-		Overrides:  map[string]string{},
-		Secrets:    map[string]map[string]string{},
-		Runtime:    map[string]any{},
-		Process:    process,
-		Client:     &http.Client{Transport: transport, Jar: jar},
-		tokens:     map[string]*oauth2.Token{},
+		Collection:     c,
+		Env:            env,
+		Overrides:      map[string]string{},
+		Secrets:        map[string]map[string]string{},
+		Runtime:        map[string]any{},
+		Process:        process,
+		Client:         &http.Client{Transport: transport, Jar: jar},
+		tokens:         map[string]*oauth2.Token{},
+		StreamMessages: 1,
 	}
 }
 
@@ -143,7 +149,11 @@ func (s *Session) Scope(r *collection.Request) *vars.Scope {
 	}
 	if s.GlobalEnv != nil {
 		for _, value := range s.GlobalEnv.Vars {
-			if value.Enabled && !value.Secret {
+			if value.Enabled && value.Secret {
+				if secret, ok := s.SecretValues(s.GlobalEnv)[value.Name]; ok {
+					scope.Global[value.Name] = secret
+				}
+			} else if value.Enabled {
 				scope.Global[value.Name] = value.Value
 			}
 		}
@@ -300,7 +310,14 @@ func (s *Session) Execute(ctx context.Context, r *collection.Request) *Result {
 		s.finish(sc, res)
 		return res
 	}
-	res.Response, res.Err = s.send(ctx, sent, r.Settings, res, scope)
+	switch r.Kind {
+	case "websocket":
+		res.Response, res.Err = s.sendWebSocket(ctx, r, sent, res, scope)
+	case "grpc":
+		res.Response, res.Err = s.sendGRPC(ctx, r, sent, res, scope)
+	default:
+		res.Response, res.Err = s.send(ctx, sent, r.Settings, res, scope)
+	}
 	if res.Err != nil {
 		s.finish(sc, res)
 		return res
@@ -420,10 +437,38 @@ func (s *Session) SetSecret(name, value string) {
 	if s.Env == nil {
 		return
 	}
-	if s.Secrets[s.Env.Name] == nil {
-		s.Secrets[s.Env.Name] = map[string]string{}
+	s.SetEnvironmentSecret(s.Env, name, value)
+}
+
+func (s *Session) environmentSecretKey(env *collection.Environment) string {
+	if env == s.Env {
+		return env.Name
 	}
-	s.Secrets[s.Env.Name][name] = value
+	if s.GlobalEnv != nil && (env == s.GlobalEnv || env.Path != "" && env.Path == s.GlobalEnv.Path) {
+		return "global:" + env.Name
+	}
+	return env.Name
+}
+
+func (s *Session) SecretValues(env *collection.Environment) map[string]string {
+	if env == nil {
+		return nil
+	}
+	return s.Secrets[s.environmentSecretKey(env)]
+}
+
+func (s *Session) SetEnvironmentSecret(env *collection.Environment, name, value string) {
+	if env == nil {
+		return
+	}
+	key := s.environmentSecretKey(env)
+	if s.Secrets == nil {
+		s.Secrets = map[string]map[string]string{}
+	}
+	if s.Secrets[key] == nil {
+		s.Secrets[key] = map[string]string{}
+	}
+	s.Secrets[key][name] = value
 }
 
 // draft is the request before interpolation, as before-request scripts see it.
@@ -465,7 +510,7 @@ func (s *Session) draft(r *collection.Request, chain []*collection.Folder, res *
 		if _, ok := d.Header("Content-Type"); !ok {
 			d.Headers = append(d.Headers, script.Header{Name: "Content-Type", Value: "application/x-www-form-urlencoded"})
 		}
-	case "multipart-form", "none", "":
+	case "multipart-form", "grpc", "websocket", "none", "":
 	default:
 		res.Warnings = append(res.Warnings, fmt.Sprintf("body type %q is not supported; sent without a body", r.Body.Mode))
 	}
@@ -509,6 +554,9 @@ func EffectiveAuth(r *collection.Request) (collection.Auth, string) {
 func (s *Session) finalize(r *collection.Request, chain []*collection.Folder, d *script.Request, scope *vars.Scope, res *Result) (*script.Request, error) {
 	in := scope.Interpolate
 	out := &script.Request{Name: d.Name, Method: strings.ToUpper(in(d.Method)), Timeout: d.Timeout, Body: in(d.Body)}
+	if r.Kind == "grpc" {
+		out.Method = in(d.Method)
+	}
 	unresolved := scope.Unresolved(d.Method + "\n" + d.URL + "\n" + d.Body)
 	for _, h := range d.Headers {
 		out.Headers = append(out.Headers, script.Header{Name: in(h.Name), Value: in(h.Value)})
@@ -789,6 +837,13 @@ func (s *Session) Mask(r *collection.Request, sent *script.Request) *script.Requ
 		for _, v := range s.Env.Vars {
 			if v.Secret {
 				note(s.Secrets[s.Env.Name][v.Name])
+			}
+		}
+	}
+	if s.GlobalEnv != nil {
+		for _, variable := range s.GlobalEnv.Vars {
+			if variable.Secret {
+				note(s.SecretValues(s.GlobalEnv)[variable.Name])
 			}
 		}
 	}

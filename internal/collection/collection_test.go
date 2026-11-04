@@ -254,7 +254,7 @@ func TestLoadErrors(t *testing.T) {
 	}
 
 	dir := copyFixture(t)
-	ws := "info:\n  name: Socket\n  type: websocket\n"
+	ws := "info:\n  name: Socket\n  type: future-protocol\n"
 	if err := os.WriteFile(filepath.Join(dir, "Users", "Socket.yml"), []byte(ws), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestLoadErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := mustLoad(t, dir)
-	if len(c.Warnings) != 1 || !strings.Contains(c.Warnings[0], `Users/Socket.yml: unsupported item type "websocket"`) {
+	if len(c.Warnings) != 1 || !strings.Contains(c.Warnings[0], `Users/Socket.yml: unsupported item type "future-protocol"`) {
 		t.Fatalf("warnings = %v", c.Warnings)
 	}
 	if c.DotEnv["PETSTORE_USERNAME"] != "u" {

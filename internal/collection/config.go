@@ -13,6 +13,7 @@ type ConfigPath struct {
 	Path     string `yaml:"path"`
 	Type     string `yaml:"type"`
 	Disabled bool   `yaml:"disabled"`
+	Enabled  *bool  `yaml:"enabled"`
 }
 
 type Proxy struct {

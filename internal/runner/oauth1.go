@@ -102,6 +102,7 @@ func (s *Session) signOAuth1(req *http.Request, auth collection.Auth) error {
 		}
 	}
 	for key, values := range parameters {
+		all.Del(key)
 		for _, value := range values {
 			all.Add(key, value)
 		}

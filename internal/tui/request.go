@@ -31,7 +31,7 @@ var reqTabNames = []string{"Params", "Body", "Headers", "Auth", "Vars", "Scripts
 
 var (
 	methods   = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
-	bodyModes = []string{"none", "json", "text", "xml", "form-urlencoded", "multipart-form", "graphql"}
+	bodyModes = []string{"none", "json", "text", "xml", "form-urlencoded", "multipart-form", "graphql", "grpc", "websocket"}
 	authModes = []string{"inherit", "none", "basic", "bearer", "apikey", "digest", "ntlm", "oauth1", "oauth2", "awsv4", "wsse", "akamai-edgegrid"}
 	operators = []string{"eq", "neq", "gt", "gte", "lt", "lte", "in", "notIn", "contains", "notContains", "length", "matches", "notMatches", "startsWith", "endsWith", "between", "isEmpty", "isNotEmpty", "isNull", "isUndefined", "isDefined", "isTruthy", "isFalsy", "isJson", "isNumber", "isString", "isBoolean", "isArray"}
 	bodyExt   = map[string]string{"json": ".json", "text": ".txt", "xml": ".xml", "sparql": ".sparql", "graphql": ".graphql"}
@@ -143,10 +143,10 @@ func (p *requestPane) view(m *Model, w, h int) []string {
 			p.names[i] = fmt.Sprintf("%s %d", n, c)
 		}
 	}
-	url := methodTag(r.Method) + " " + markVars(r.URL)
+	url := methodTag(r.MethodLabel()) + " " + markVars(r.URL)
 	if pr := m.prompt; pr != nil && pr.inline {
 		pr.input.Width = max(10, w-9)
-		url = methodTag(r.Method) + " " + pr.input.View()
+		url = methodTag(r.MethodLabel()) + " " + pr.input.View()
 	}
 	lines := []string{url, tabs(p.names, int(p.tab))}
 	if p.editor != nil {
@@ -498,6 +498,19 @@ func (m *Model) pickMethod() tea.Cmd {
 	if r == nil {
 		return nil
 	}
+	if r.Kind == "grpc" {
+		return m.ask("gRPC method", r.Method, func(value string) tea.Cmd {
+			if value = strings.TrimSpace(value); value != "" && value != r.Method {
+				r.Method = value
+				m.changed(r)
+			}
+			return nil
+		})
+	}
+	if r.Kind == "websocket" {
+		m.setStatus(nil, "WebSocket connections use an HTTP GET handshake")
+		return nil
+	}
 	items := make([]pickItem, len(methods))
 	for i, x := range methods {
 		items[i] = pickItem{label: x}
@@ -525,6 +538,8 @@ func (m *Model) editBody() tea.Cmd {
 	m.req.editor = nil
 	m.req.switchTab(tabBody)
 	switch mode := cmp.Or(r.Body.Mode, "none"); mode {
+	case "grpc", "websocket":
+		return m.editProtocolMessage(r, selectedMessage(r))
 	case "none":
 		return m.pickBodyType()
 	case "form-urlencoded", "multipart-form":
@@ -556,15 +571,29 @@ func (m *Model) pickBodyType() tea.Cmd {
 		{"none", "no body"}, {"json", "application/json"}, {"text", "text/plain"},
 		{"xml", "application/xml"}, {"form-urlencoded", "application/x-www-form-urlencoded"},
 		{"multipart-form", "text fields and file uploads"}, {"graphql", "GraphQL query and variables"},
+		{"grpc", "Protocol Buffers and server reflection"}, {"websocket", "live text, JSON and binary messages"},
 	}
 	m.req.editor = nil
 	return m.choose("Body type", items, slices.Index(bodyModes, mode), func(i int) tea.Cmd {
 		next := bodyModes[i]
 		if next != mode {
 			r.Body.Mode = next
-			if next == "graphql" {
+			if next == "grpc" || next == "websocket" {
+				r.Kind = next
+				if len(r.Body.Messages) == 0 {
+					r.Body.Messages = []collection.Message{{Title: "message 1", Type: "json", Data: "{}"}}
+				}
+				if next == "grpc" {
+					r.Method = ""
+				} else {
+					r.Method = "GET"
+				}
+			} else if next == "graphql" {
 				r.Kind, r.Method = "graphql", "POST"
-			} else if r.Kind == "graphql" {
+			} else if r.Kind == "graphql" || r.Kind == "grpc" || r.Kind == "websocket" {
+				if r.Kind == "grpc" {
+					r.Method = "GET"
+				}
 				r.Kind = "http"
 			}
 			m.changed(r)
@@ -573,6 +602,11 @@ func (m *Model) pickBodyType() tea.Cmd {
 			m.focus = focusRequest
 			m.req.switchTab(tabBody)
 			return nil
+		}
+		if next == "grpc" {
+			m.focus = focusRequest
+			m.req.switchTab(tabBody)
+			return m.pickMethod()
 		}
 		seeded := next == "json" && strings.TrimSpace(r.Body.Data) == ""
 		if seeded {
@@ -625,6 +659,8 @@ func bodyTab(m *Model, r *collection.Request) tabSpec {
 	spec := tabSpec{editWhat: "body"}
 	spec.rows = append(spec.rows, row{line: stMuted.Render("type ") + stBold.Render(mode) + stMuted.Render(" ▾"), click: m.pickBodyType})
 	switch mode {
+	case "grpc", "websocket":
+		return protocolBodyTab(m, r, spec)
 	case "none":
 		spec.rows = append(spec.rows, text(stMuted.Render("No body. enter picks a type and opens the editor.")))
 		spec.edit = m.pickBodyType

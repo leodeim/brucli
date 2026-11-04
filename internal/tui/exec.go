@@ -15,6 +15,7 @@ import (
 
 	"github.com/leodeim/brucli/internal/collection"
 	"github.com/leodeim/brucli/internal/runner"
+	"github.com/leodeim/brucli/internal/script"
 )
 
 // runState is the request or run in flight. Requests run on clones and a forked session, so the
@@ -28,6 +29,23 @@ type runState struct {
 	active  bool
 	cancel  context.CancelFunc
 	events  chan runEvent
+	stream  chan *script.Response
+	input   chan collection.Message
+}
+
+type streamProgressMsg struct {
+	state    *runState
+	response *script.Response
+}
+
+func (s *runState) waitStream() tea.Cmd {
+	return func() tea.Msg {
+		response, ok := <-s.stream
+		if !ok {
+			return nil
+		}
+		return streamProgressMsg{state: s, response: response}
+	}
 }
 
 type runEvent struct {
@@ -63,6 +81,9 @@ func (m *Model) sendTarget() *collection.Request {
 
 func (m *Model) sendSelected() tea.Cmd {
 	if m.busy {
+		if m.run != nil && m.run.input != nil && m.sendTarget() == m.run.current {
+			return m.composeWebSocketMessage()
+		}
 		m.setStatus(errors.New("esc cancels it"), "a request is already running")
 		return nil
 	}
@@ -86,11 +107,64 @@ func (m *Model) send(r *collection.Request) tea.Cmd {
 	clone, fork := r.Clone(), m.s.Fork()
 	m.busy = true
 	m.run = &runState{name: r.Name, current: r, active: true, cancel: cancel}
+	state := m.run
+	if r.Kind == "websocket" || r.Kind == "grpc" {
+		state.stream = make(chan *script.Response, 16)
+		fork.OnStream = func(response *script.Response) {
+			select {
+			case state.stream <- response:
+			case <-ctx.Done():
+			}
+		}
+		if r.Kind == "websocket" {
+			state.input = make(chan collection.Message, 8)
+			fork.StreamInput = state.input
+			fork.StreamInteractive = true
+		}
+	}
 	m.setStatus(nil, "sending %s…", r.Name)
-	return func() tea.Msg {
+	execute := func() tea.Msg {
 		defer cancel()
+		if state.stream != nil {
+			defer close(state.stream)
+		}
 		return sentMsg{req: r, res: fork.Execute(ctx, clone), fork: fork}
 	}
+	if state.stream != nil {
+		return tea.Batch(execute, state.waitStream())
+	}
+	return execute
+}
+
+func (m *Model) onStream(msg streamProgressMsg) tea.Cmd {
+	if m.run != msg.state || !m.busy {
+		return nil
+	}
+	m.results[msg.state.current] = &runner.Result{Request: msg.state.current, Response: msg.response}
+	if msg.response.Protocol == "websocket" {
+		m.setStatus(nil, "connected · s sends a message · esc disconnects")
+	} else {
+		m.setStatus(nil, "receiving gRPC messages · esc cancels")
+	}
+	return msg.state.waitStream()
+}
+
+func (m *Model) composeWebSocketMessage() tea.Cmd {
+	state := m.run
+	fields := []*field{choiceField("Type", []string{"text", "json", "binary"}, "text"), textField("Message", "")}
+	return m.openForm("Send WebSocket message", "Binary messages use base64 data.", fields, 1, func(values []string) tea.Cmd {
+		if m.run != state || !m.busy {
+			m.setStatus(fmt.Errorf("connect again to send a message"), "WebSocket is closed")
+			return nil
+		}
+		select {
+		case state.input <- collection.Message{Type: values[0], Data: values[1]}:
+			m.setStatus(nil, "message queued · esc disconnects")
+		default:
+			m.setStatus(fmt.Errorf("wait for queued messages to send"), "WebSocket queue is full")
+		}
+		return nil
+	})
 }
 
 func (m *Model) onSent(msg sentMsg) tea.Cmd {
@@ -263,6 +337,10 @@ func (m *Model) onEdited(msg editedMsg) tea.Cmd {
 }
 
 func (m *Model) copyCurl() tea.Cmd {
+	if m.current != nil && (m.current.Kind == "grpc" || m.current.Kind == "websocket") {
+		m.setStatus(fmt.Errorf("select an HTTP or GraphQL request"), "curl export is available for HTTP requests")
+		return nil
+	}
 	res := m.results[m.current]
 	if res == nil || res.Sent == nil {
 		m.setStatus(fmt.Errorf("send it first"), "no request to copy")

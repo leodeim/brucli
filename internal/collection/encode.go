@@ -2,6 +2,7 @@ package collection
 
 import (
 	"bytes"
+	"cmp"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -45,22 +46,38 @@ func (r *Request) Save() error {
 	info := child(r.doc, "info", requestKeys)
 	if i := lookup(info, "type"); i >= 0 {
 		old := info.Content[i+1].Value
-		if old != kind && (old == "http" || old == "graphql") {
+		if old != kind && slices.Contains([]string{"http", "graphql", "grpc", "websocket"}, old) {
 			set(r.doc, old, nil, requestKeys)
 		}
 	}
 	set(child(r.doc, "info", requestKeys), "type", scalar(kind), infoKeys)
 	http := child(r.doc, kind, requestKeys)
-	set(http, "method", scalar(r.Method), httpKeys)
 	set(http, "url", scalar(r.URL), httpKeys)
-	set(http, "params", paramsNode(r.Params), httpKeys)
-	set(http, "headers", kvsNode(r.Headers), httpKeys)
-	set(http, "body", bodyNode(r.Body), httpKeys)
 	set(http, "auth", authNode(r.Auth), httpKeys)
+	if kind == "grpc" || kind == "websocket" {
+		set(http, "message", messagesNode(r.Body.Messages, kind), nil)
+		if kind == "grpc" {
+			set(http, "method", scalar(r.Method), httpKeys)
+			set(http, "metadata", kvsNode(r.Headers), nil)
+			set(http, "methodType", optional(r.MethodType), nil)
+			set(http, "protoFilePath", optional(r.ProtoFilePath), nil)
+		} else {
+			set(http, "headers", kvsNode(r.Headers), httpKeys)
+		}
+	} else {
+		set(http, "method", scalar(r.Method), httpKeys)
+		set(http, "params", paramsNode(r.Params), httpKeys)
+		set(http, "headers", kvsNode(r.Headers), httpKeys)
+		set(http, "body", bodyNode(r.Body), httpKeys)
+	}
 
 	runtime := child(r.doc, "runtime", requestKeys)
 	set(runtime, "variables", kvsNode(r.Vars), runtimeKeys)
-	set(runtime, "scripts", scriptsNode(r.Scripts), runtimeKeys)
+	var originalScripts *yaml.Node
+	if i := lookup(runtime, "scripts"); i >= 0 {
+		originalScripts = runtime.Content[i+1]
+	}
+	set(runtime, "scripts", mergedScriptsNode(originalScripts, r.Scripts), runtimeKeys)
 	set(runtime, "assertions", assertionsNode(r.Assertions), runtimeKeys)
 	set(runtime, "actions", actionsNode(r.Actions), runtimeKeys)
 	if len(runtime.Content) == 0 {
@@ -68,6 +85,69 @@ func (r *Request) Save() error {
 	}
 	set(r.doc, "docs", optional(r.Docs), requestKeys)
 	return writeYAML(r.Path, r.doc)
+}
+
+func mergedScriptsNode(original *yaml.Node, scripts Scripts) *yaml.Node {
+	known := scriptsNode(scripts)
+	if original == nil || original.Kind != yaml.SequenceNode {
+		return known
+	}
+	updates := map[string]*yaml.Node{}
+	if known != nil {
+		for _, entry := range known.Content {
+			if i := lookup(entry, "type"); i >= 0 {
+				updates[entry.Content[i+1].Value] = entry
+			}
+		}
+	}
+	var entries []*yaml.Node
+	for _, entry := range original.Content {
+		typ := ""
+		if i := lookup(entry, "type"); i >= 0 {
+			typ = entry.Content[i+1].Value
+		}
+		if !slices.Contains([]string{"before-request", "after-response", "tests"}, typ) {
+			entries = append(entries, entry)
+		} else if replacement := updates[typ]; replacement != nil {
+			entries = append(entries, replacement)
+			delete(updates, typ)
+		}
+	}
+	for _, typ := range []string{"before-request", "after-response", "tests"} {
+		if entry := updates[typ]; entry != nil {
+			entries = append(entries, entry)
+		}
+	}
+	return sequence(entries)
+}
+
+func messagesNode(messages []Message, kind string) *yaml.Node {
+	payload := func(message Message) *yaml.Node {
+		if kind == "grpc" {
+			return scalar(message.Data)
+		}
+		node := mapping()
+		add(node, "type", scalar(cmp.Or(message.Type, "json")))
+		add(node, "data", scalar(message.Data))
+		return node
+	}
+	if len(messages) == 0 {
+		return nil
+	}
+	if len(messages) == 1 {
+		return payload(messages[0])
+	}
+	var nodes []*yaml.Node
+	for _, message := range messages {
+		node := mapping()
+		add(node, "title", scalar(message.Title))
+		if message.Selected {
+			add(node, "selected", boolean(true))
+		}
+		add(node, "message", payload(message))
+		nodes = append(nodes, node)
+	}
+	return sequence(nodes)
 }
 
 // Save writes the environment back to its file. A secret's value is never written.

@@ -127,6 +127,13 @@ func (t *requestTransport) makeTransport(req *http.Request) (*http.Transport, er
 		return nil, err
 	}
 	transport.TLSClientConfig = config
+	var requestProxy *url.URL
+	if transport.Proxy != nil {
+		requestProxy, err = transport.Proxy(req)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// HTTPS proxy handshakes must select certificates for the proxy's host,
 	// rather than inheriting a certificate selected for the origin server.
 	transport.DialTLSContext = func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -139,6 +146,9 @@ func (t *requestTransport) makeTransport(req *http.Request) (*http.Transport, er
 			return nil, err
 		}
 		config.ServerName = host
+		if requestProxy != nil && requestProxy.Scheme == "https" && strings.EqualFold(host, requestProxy.Hostname()) {
+			config.NextProtos = []string{"http/1.1"}
+		}
 		dial := transport.DialContext
 		if dial == nil {
 			dial = (&net.Dialer{}).DialContext

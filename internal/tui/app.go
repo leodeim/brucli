@@ -1,4 +1,4 @@
-// Package tui is brucli's terminal UI: Bruno's sidebar, request and response panes over a YAML collection.
+// Package tui is brucli's terminal UI for Bruno collections.
 package tui
 
 import (
@@ -215,6 +215,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 	case sentMsg:
 		cmd = m.onSent(msg)
+	case streamProgressMsg:
+		cmd = m.onStream(msg)
 	case runStepMsg:
 		cmd = m.onRunStep(msg)
 	case editedMsg:
@@ -694,6 +696,10 @@ func (m *Model) responseTitle(w int) string {
 	switch {
 	case m.current == nil:
 		return "Response"
+	case m.sending(m.current) && res != nil && res.Response != nil && res.Response.Protocol == "websocket":
+		return "Response · connected (s sends a message · esc disconnects)"
+	case m.sending(m.current) && res != nil && res.Response != nil && res.Response.Protocol == "grpc":
+		return "Response · receiving gRPC messages (esc cancels)"
 	case m.sending(m.current):
 		return "Response · sending… (esc cancels)"
 	case res == nil:
@@ -705,7 +711,7 @@ func (m *Model) responseTitle(w int) string {
 	}
 	r := res.Response
 	parts := []string{
-		statusStyle(r.Status).Render(fmt.Sprintf("%d %s", r.Status, r.StatusText)),
+		responseStyle(r).Render(fmt.Sprintf("%d %s", r.Status, r.StatusText)),
 		elapsed(r.Duration),
 		size(len(r.Body)),
 	}

@@ -111,12 +111,16 @@ func decodeScripts(raw []rawScript) Scripts {
 }
 
 type rawHTTP struct {
-	Method  string    `yaml:"method"`
-	URL     string    `yaml:"url"`
-	Params  []rawKV   `yaml:"params"`
-	Headers []rawKV   `yaml:"headers"`
-	Body    yaml.Node `yaml:"body"`
-	Auth    yaml.Node `yaml:"auth"`
+	Method        string    `yaml:"method"`
+	URL           string    `yaml:"url"`
+	Params        []rawKV   `yaml:"params"`
+	Headers       []rawKV   `yaml:"headers"`
+	Body          yaml.Node `yaml:"body"`
+	Auth          yaml.Node `yaml:"auth"`
+	Metadata      []rawKV   `yaml:"metadata"`
+	Message       yaml.Node `yaml:"message"`
+	MethodType    string    `yaml:"methodType"`
+	ProtoFilePath string    `yaml:"protoFilePath"`
 }
 
 type rawRequest struct {
@@ -126,19 +130,22 @@ type rawRequest struct {
 		Seq  int      `yaml:"seq"`
 		Tags []string `yaml:"tags"`
 	} `yaml:"info"`
-	HTTP    rawHTTP `yaml:"http"`
-	GraphQL rawHTTP `yaml:"graphql"`
-	Runtime struct {
+	HTTP      rawHTTP `yaml:"http"`
+	GraphQL   rawHTTP `yaml:"graphql"`
+	GRPC      rawHTTP `yaml:"grpc"`
+	WebSocket rawHTTP `yaml:"websocket"`
+	Runtime   struct {
 		Variables  []rawKV        `yaml:"variables"`
 		Scripts    []rawScript    `yaml:"scripts"`
 		Assertions []rawAssertion `yaml:"assertions"`
 		Actions    []rawAction    `yaml:"actions"`
 	} `yaml:"runtime"`
 	Settings struct {
-		EncodeURL       *bool `yaml:"encodeUrl"`
-		Timeout         any   `yaml:"timeout"`
-		FollowRedirects *bool `yaml:"followRedirects"`
-		MaxRedirects    *int  `yaml:"maxRedirects"`
+		EncodeURL         *bool `yaml:"encodeUrl"`
+		Timeout           any   `yaml:"timeout"`
+		FollowRedirects   *bool `yaml:"followRedirects"`
+		MaxRedirects      *int  `yaml:"maxRedirects"`
+		KeepAliveInterval int   `yaml:"keepAliveInterval"`
 	} `yaml:"settings"`
 	Docs yaml.Node `yaml:"docs"`
 }
@@ -182,11 +189,17 @@ func requestFromNode(path string, doc *yaml.Node) (*Request, error) {
 	if err := doc.Decode(&raw); err != nil {
 		return nil, err
 	}
-	if raw.Info.Type != "http" && raw.Info.Type != "graphql" {
+	if raw.Info.Type != "http" && raw.Info.Type != "graphql" && raw.Info.Type != "grpc" && raw.Info.Type != "websocket" {
 		return nil, fmt.Errorf("%w %q", errUnsupported, raw.Info.Type)
 	}
 	if raw.Info.Type == "graphql" {
 		raw.HTTP = raw.GraphQL
+	}
+	if raw.Info.Type == "grpc" {
+		raw.HTTP = raw.GRPC
+	}
+	if raw.Info.Type == "websocket" {
+		raw.HTTP = raw.WebSocket
 	}
 	r := &Request{
 		Kind:    raw.Info.Type,
@@ -216,6 +229,20 @@ func requestFromNode(path string, doc *yaml.Node) (*Request, error) {
 		r.Body = Body{Mode: "graphql", Data: body.Query, Variables: body.Variables, OperationName: body.OperationName}
 		r.Method = strings.ToUpper(cmp.Or(raw.HTTP.Method, "POST"))
 	}
+	if r.Kind == "grpc" || r.Kind == "websocket" {
+		messages, err := decodeMessages(&raw.HTTP.Message, r.Kind)
+		if err != nil {
+			return nil, err
+		}
+		r.Body = Body{Mode: r.Kind, Messages: messages}
+		r.MethodType, r.ProtoFilePath = raw.HTTP.MethodType, raw.HTTP.ProtoFilePath
+		if r.Kind == "grpc" {
+			r.Method = raw.HTTP.Method
+			r.Headers = kvs(raw.HTTP.Metadata)
+		} else {
+			r.Method = "GET"
+		}
+	}
 	for _, p := range raw.HTTP.Params {
 		r.Params = append(r.Params, Param{KV: p.kv(), Type: cmp.Or(p.Type, "query")})
 	}
@@ -236,6 +263,7 @@ func requestFromNode(path string, doc *yaml.Node) (*Request, error) {
 	}
 	s := raw.Settings
 	r.Settings = Settings{EncodeURL: true, FollowRedirects: true, MaxRedirects: 5}
+	r.Settings.KeepAliveIntervalMS = raw.Settings.KeepAliveInterval
 	if s.EncodeURL != nil {
 		r.Settings.EncodeURL = *s.EncodeURL
 	}
@@ -249,6 +277,51 @@ func requestFromNode(path string, doc *yaml.Node) (*Request, error) {
 		r.Settings.TimeoutMS = ms
 	}
 	return r, nil
+}
+
+func decodeMessages(node *yaml.Node, kind string) ([]Message, error) {
+	if node.Kind == 0 {
+		return nil, nil
+	}
+	if node.Kind == yaml.ScalarNode {
+		return []Message{{Title: "message 1", Type: "json", Data: node.Value}}, nil
+	}
+	if node.Kind == yaml.MappingNode {
+		var message struct {
+			Type string `yaml:"type"`
+			Data string `yaml:"data"`
+		}
+		if err := node.Decode(&message); err != nil {
+			return nil, err
+		}
+		return []Message{{Title: "message 1", Type: cmp.Or(message.Type, "json"), Data: message.Data}}, nil
+	}
+	var raw []struct {
+		Title    string    `yaml:"title"`
+		Message  yaml.Node `yaml:"message"`
+		Selected bool      `yaml:"selected"`
+	}
+	if err := node.Decode(&raw); err != nil {
+		return nil, err
+	}
+	var messages []Message
+	for i, item := range raw {
+		message := Message{Title: cmp.Or(item.Title, fmt.Sprintf("message %d", i+1)), Type: "json", Selected: item.Selected}
+		if kind == "grpc" {
+			message.Data = item.Message.Value
+		} else {
+			var payload struct {
+				Type string `yaml:"type"`
+				Data string `yaml:"data"`
+			}
+			if err := item.Message.Decode(&payload); err != nil {
+				return nil, err
+			}
+			message.Type, message.Data = cmp.Or(payload.Type, "json"), payload.Data
+		}
+		messages = append(messages, message)
+	}
+	return messages, nil
 }
 
 func decodeAuth(n *yaml.Node) Auth {

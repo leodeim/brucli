@@ -28,4 +28,13 @@ func TestGlobalScope(t *testing.T) {
 	if s.GlobalEnv.Vars[0].Value != "global" {
 		t.Fatal("fork shares global variables")
 	}
+	s.SetEnvironmentSecret(s.GlobalEnv, "secret", "session-only")
+	if s.Scope(nil).Interpolate("{{secret}}") != "session-only" {
+		t.Fatal("global secret was not resolved")
+	}
+	s.Env = &collection.Environment{Name: s.GlobalEnv.Name, Vars: []collection.EnvVar{{KV: collection.KV{Name: "secret", Enabled: true}, Secret: true}}}
+	s.SetSecret("secret", "local-secret")
+	if s.SecretValues(s.GlobalEnv)["secret"] != "session-only" || s.Scope(nil).Interpolate("{{secret}}") != "local-secret" {
+		t.Fatal("global and collection secrets were mixed")
+	}
 }

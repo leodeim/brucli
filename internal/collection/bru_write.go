@@ -74,6 +74,9 @@ func bruFields(kvs []KV) string {
 func (r *Request) bruBlocks() map[string]string {
 	blocks := map[string]string{}
 	meta := []bruPair{{name: "name", value: r.Name, enabled: true}, {name: "type", value: cmp.Or(r.Kind, "http"), enabled: true}, {name: "seq", value: strconv.Itoa(r.Seq), enabled: true}}
+	if r.Kind == "websocket" {
+		meta[1].value = "ws"
+	}
 	if len(r.Tags) > 0 {
 		meta = append(meta, bruPair{name: "tags", value: strings.Join(r.Tags, "\n"), enabled: true})
 	}
@@ -83,6 +86,14 @@ func (r *Request) bruBlocks() map[string]string {
 	if !slices.Contains([]string{"get", "post", "put", "patch", "delete", "options", "head", "trace", "connect"}, method) {
 		method = "http"
 		pairs = append(pairs, bruPair{name: "method", value: r.Method, enabled: true})
+	}
+	if r.Kind == "grpc" {
+		method = "grpc"
+		pairs = append(pairs, bruPair{name: "methodType", value: r.MethodType, enabled: true}, bruPair{name: "protoPath", value: r.ProtoFilePath, enabled: true})
+	}
+	if r.Kind == "websocket" {
+		method = "ws"
+		pairs[1].value = "ws"
 	}
 	blocks[method] = bruDictionary(pairs)
 	blocks["headers"] = bruFields(r.Headers)
@@ -145,6 +156,25 @@ func (r *Request) bruBlocks() map[string]string {
 		if r.Body.Mode == "graphql" {
 			blocks["body:graphql:vars"] = bruRawText(r.Body.Variables)
 		}
+	}
+	if r.Kind == "grpc" || r.Kind == "websocket" {
+		delete(blocks, "body:"+r.Body.Mode)
+		name := "body:grpc"
+		if r.Kind == "websocket" {
+			name = "body:ws"
+		}
+		var values []string
+		for _, message := range r.Body.Messages {
+			fields := []bruPair{{name: "name", value: message.Title, enabled: true}, {name: "content", value: message.Data, enabled: true}}
+			if r.Kind == "websocket" {
+				fields = append(fields, bruPair{name: "type", value: message.Type, enabled: true})
+				if message.Selected {
+					fields = append(fields, bruPair{name: "selected", value: "true", enabled: true})
+				}
+			}
+			values = append(values, bruDictionary(fields))
+		}
+		blocks[name] = strings.Join(values, "}\n\n"+name+" {\n")
 	}
 	blocks["vars:pre-request"] = bruFields(r.Vars)
 	var actions, assertions []bruPair
@@ -232,6 +262,10 @@ func writeBru(path, source string, previous, next map[string]string) error {
 	position := 0
 	for _, block := range blocks {
 		text.WriteString(source[position:block.start])
+		if written[block.name] && (block.name == "body:grpc" || block.name == "body:ws") && previous[block.name] != next[block.name] {
+			position = block.end
+			continue
+		}
 		name := block.name
 		if _, exists := next[name]; !exists && slices.Contains([]string{"get", "post", "put", "patch", "delete", "options", "head", "trace", "connect", "http", "grpc", "ws"}, name) {
 			for _, candidate := range []string{"get", "post", "put", "patch", "delete", "options", "head", "trace", "connect", "http", "grpc", "ws"} {

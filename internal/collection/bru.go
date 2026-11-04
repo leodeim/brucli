@@ -237,6 +237,7 @@ func bruNode(path string, data []byte) (*yaml.Node, error) {
 	var assertions []Assertion
 	var actions []Action
 	var body Body
+	var messages []Message
 	for _, block := range blocks {
 		switch block.name {
 		case "meta":
@@ -312,6 +313,12 @@ func bruNode(path string, data []byte) (*yaml.Node, error) {
 			}
 		case "body:graphql:vars":
 			body.Variables = bruText(block.body)
+		case "body:grpc", "body:ws":
+			pairs, err := bruPairs(block.body)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, Message{Title: cmp.Or(bruValue(pairs, "name"), fmt.Sprintf("message %d", len(messages)+1)), Type: cmp.Or(bruValue(pairs, "type"), "json"), Data: bruValue(pairs, "content"), Selected: bruValue(pairs, "selected") == "true"})
 		case "body:form-urlencoded", "body:multipart-form":
 			if strings.TrimPrefix(block.name, "body:") != mode {
 				continue
@@ -413,6 +420,9 @@ func bruNode(path string, data []byte) (*yaml.Node, error) {
 	add(request, "auth", bruAuth(auth, blocks))
 	body.Mode = mode
 	add(request, "body", bodyNode(body))
+	if kind == "grpc" || kind == "websocket" {
+		add(request, "message", messagesNode(messages, kind))
+	}
 	add(runtime, "scripts", scriptsNode(scripts))
 	add(runtime, "assertions", assertionsNode(assertions))
 	add(runtime, "actions", actionsNode(actions))

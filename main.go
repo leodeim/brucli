@@ -1,4 +1,4 @@
-// Command brucli is a terminal UI for Bruno collections in the YAML (OpenCollection) format, and
+// Command brucli is a terminal UI for Bruno collections in YAML and .bru formats, and
 // `brucli run` sends them headless like `bru run`.
 package main
 
@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -43,16 +44,18 @@ func (e envVars) Set(v string) error {
 }
 
 type options struct {
-	dir       string
-	env       string
-	globalEnv string
-	vars      envVars
-	insecure  bool
-	noMouse   bool
-	tags      string
-	exclude   string
-	folder    string
-	transport runner.TransportOptions
+	dir            string
+	env            string
+	globalEnv      string
+	vars           envVars
+	insecure       bool
+	noMouse        bool
+	tags           string
+	exclude        string
+	folder         string
+	transport      runner.TransportOptions
+	streamMessages int
+	streamTimeout  time.Duration
 }
 
 func parse(args []string, headless bool, stderr io.Writer) (*options, error) {
@@ -71,6 +74,8 @@ func parse(args []string, headless bool, stderr io.Writer) (*options, error) {
 	fs.BoolVar(&o.transport.NoProxy, "noproxy", false, "disable collection and environment proxies")
 	fs.StringVar(&o.transport.CACert, "cacert", "", "PEM file containing trusted CA certificates")
 	fs.StringVar(&o.transport.ClientCertConfig, "client-cert-config", "", "JSON client certificate configuration file")
+	fs.IntVar(&o.streamMessages, "stream-messages", 1, "WebSocket responses to receive in a headless run (0 waits for close)")
+	fs.DurationVar(&o.streamTimeout, "stream-timeout", 0, "timeout for gRPC and WebSocket streams, e.g. 30s")
 	if !headless {
 		fs.BoolVar(&o.noMouse, "no-mouse", false, "leave the mouse to the terminal (text selection) instead of clicks and scrolling")
 	}
@@ -90,6 +95,9 @@ func parse(args []string, headless bool, stderr io.Writer) (*options, error) {
 	}
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	if o.streamMessages < 0 || o.streamTimeout < 0 {
+		return nil, errors.New("stream limits cannot be negative")
 	}
 	switch fs.NArg() {
 	case 0:
@@ -142,6 +150,7 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 	}
 	s := runner.NewSession(c, env, o.insecure)
 	s.Interactive = !headless
+	s.StreamMessages, s.StreamTimeout = o.streamMessages, o.streamTimeout
 	if err := s.ConfigureTransport(o.transport); err != nil {
 		return 2, err
 	}
@@ -205,12 +214,12 @@ func report(out io.Writer, c *collection.Collection, res *runner.Result) {
 	}
 	switch {
 	case res.Skipped:
-		fmt.Fprintf(out, "- %-6s %s  skipped\n", r.Method, name)
+		fmt.Fprintf(out, "- %-6s %s  skipped\n", r.MethodLabel(), name)
 		return
 	case res.Err != nil:
-		fmt.Fprintf(out, "%s %-6s %s  %v\n", mark, r.Method, name, res.Err)
+		fmt.Fprintf(out, "%s %-6s %s  %v\n", mark, r.MethodLabel(), name, res.Err)
 	default:
-		fmt.Fprintf(out, "%s %-6s %s  %d %s\n", mark, r.Method, name, res.Response.Status, res.Response.Duration.Round(1e6))
+		fmt.Fprintf(out, "%s %-6s %s  %d %s\n", mark, r.MethodLabel(), name, res.Response.Status, res.Response.Duration.Round(1e6))
 	}
 	for _, a := range res.Assertions {
 		if !a.Passed {

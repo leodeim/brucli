@@ -152,7 +152,7 @@ func (t *tree) view(m *Model, w, h int) []string {
 			}
 			line = indent + stMuted.Render(arrow) + " " + stBold.Render(n.folder.Name)
 		} else {
-			line = indent + "  " + methodTag(n.req.Method) + " " + n.req.Name + m.requestMarks(n.req)
+			line = indent + "  " + methodTag(n.req.MethodLabel()) + " " + n.req.Name + m.requestMarks(n.req)
 		}
 		line = fit(line, w)
 		switch {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/leodeim/brucli/internal/script"
 )
 
 var (
@@ -61,6 +62,13 @@ func statusStyle(code int) lipgloss.Style {
 		return stInfo
 	}
 	return stOK
+}
+
+func responseStyle(response *script.Response) lipgloss.Style {
+	if response.Protocol == "grpc" && response.Status != 0 {
+		return stErr
+	}
+	return statusStyle(response.Status)
 }
 
 func stripStyles(s string) string { return ansi.Strip(s) }

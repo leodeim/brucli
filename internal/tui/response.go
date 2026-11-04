@@ -216,7 +216,11 @@ func bodyLines(res *runner.Result) []string {
 	case res.Skipped:
 		return []string{stMuted.Render("Skipped by a before-request script.")}
 	case res.Err != nil:
-		return []string{stErr.Render(res.Err.Error())}
+		lines := []string{stErr.Render(res.Err.Error())}
+		if res.Response != nil && len(res.Response.Body) > 0 {
+			lines = append(lines, strings.Split(pretty(res.Response.Body), "\n")...)
+		}
+		return lines
 	case len(res.Response.Body) == 0:
 		return []string{stMuted.Render("(empty body)")}
 	}
@@ -242,6 +246,9 @@ func headerLines(res *runner.Result) []string {
 
 func timelineLines(m *Model, res *runner.Result) []string {
 	if res.Sent == nil {
+		if res.Response != nil && res.Response.Protocol != "" {
+			return []string{stMuted.Render("Live connection.")}
+		}
 		return []string{stMuted.Render("Nothing was sent.")}
 	}
 	s := res.Sent
@@ -258,7 +265,10 @@ func timelineLines(m *Model, res *runner.Result) []string {
 	}
 	if r := res.Response; r != nil {
 		lines = append(lines, "", stTitle.Render("Response"),
-			statusStyle(r.Status).Render(fmt.Sprintf("%d %s", r.Status, r.StatusText))+stMuted.Render(fmt.Sprintf(" in %s from %s", elapsed(r.Duration), r.URL)))
+			responseStyle(r).Render(fmt.Sprintf("%d %s", r.Status, r.StatusText))+stMuted.Render(fmt.Sprintf(" in %s from %s", elapsed(r.Duration), r.URL)))
+	}
+	if res.Request.Kind == "grpc" || res.Request.Kind == "websocket" {
+		return lines
 	}
 	lines = append(lines, "", stTitle.Render("curl")+stMuted.Render(" (c copies it with credentials)"))
 	return append(lines, strings.Split(runner.Curl(s), "\n")...)

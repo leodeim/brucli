@@ -1,4 +1,4 @@
-// Package collection reads and writes Bruno collections stored in the YAML (OpenCollection) format.
+// Package collection reads and writes Bruno collections in YAML and .bru formats.
 package collection
 
 import (
@@ -21,7 +21,7 @@ const (
 	dotEnvFile     = ".env"
 )
 
-// ErrNotCollection reports a directory that holds no opencollection.yml.
+// ErrNotCollection reports a directory without a Bruno collection manifest.
 var ErrNotCollection = errors.New("not a Bruno collection: no opencollection.yml or bruno.json")
 
 // Collection is a loaded collection: its folder tree, environments and the .env next to it.
@@ -134,7 +134,15 @@ type Body struct {
 	Form          []KV
 	Variables     string
 	OperationName string
+	Messages      []Message
 	raw           *yaml.Node
+}
+
+type Message struct {
+	Title    string
+	Type     string
+	Data     string
+	Selected bool
 }
 
 // Scripts are the JavaScript hooks of a request, folder or collection.
@@ -165,30 +173,33 @@ type Action struct {
 
 // Settings are per-request transport options.
 type Settings struct {
-	EncodeURL       bool
-	TimeoutMS       int
-	FollowRedirects bool
-	MaxRedirects    int
+	EncodeURL           bool
+	TimeoutMS           int
+	FollowRedirects     bool
+	MaxRedirects        int
+	KeepAliveIntervalMS int
 }
 
 // Request is one HTTP request file.
 type Request struct {
-	Kind       string
-	Name       string
-	Seq        int
-	Tags       []string
-	Method     string
-	URL        string
-	Params     []Param
-	Headers    []KV
-	Body       Body
-	Auth       Auth
-	Vars       []KV
-	Actions    []Action
-	Scripts    Scripts
-	Assertions []Assertion
-	Settings   Settings
-	Docs       string
+	Kind          string
+	Name          string
+	Seq           int
+	Tags          []string
+	Method        string
+	MethodType    string
+	ProtoFilePath string
+	URL           string
+	Params        []Param
+	Headers       []KV
+	Body          Body
+	Auth          Auth
+	Vars          []KV
+	Actions       []Action
+	Scripts       Scripts
+	Assertions    []Assertion
+	Settings      Settings
+	Docs          string
 
 	Path      string
 	Folder    *Folder
@@ -216,8 +227,19 @@ func (r *Request) Clone() *Request {
 	c.Actions = slices.Clone(r.Actions)
 	c.Assertions = slices.Clone(r.Assertions)
 	c.Body.Form = slices.Clone(r.Body.Form)
+	c.Body.Messages = slices.Clone(r.Body.Messages)
 	c.Auth.Options = maps.Clone(r.Auth.Options)
 	return &c
+}
+
+func (r *Request) MethodLabel() string {
+	switch r.Kind {
+	case "grpc":
+		return "gRPC"
+	case "websocket":
+		return "WS"
+	}
+	return r.Method
 }
 
 // HasTag reports whether the request carries tag.

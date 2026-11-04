@@ -71,6 +71,7 @@ func (r *Request) DeleteHeader(name string) {
 
 // Response is a received response.
 type Response struct {
+	Protocol   string
 	Status     int
 	StatusText string
 	Headers    http.Header
