@@ -197,7 +197,7 @@ func runHeadless(c *collection.Collection, s *runner.Session, o *options, out io
 
 func report(out io.Writer, c *collection.Collection, res *runner.Result) {
 	r := res.Request
-	name, _ := filepath.Rel(c.Dir, strings.TrimSuffix(r.Path, ".yml"))
+	name, _ := filepath.Rel(c.Dir, strings.TrimSuffix(r.Path, filepath.Ext(r.Path)))
 	mark := "✓"
 	if res.Failed() {
 		mark = "✗"

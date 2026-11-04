@@ -21,7 +21,7 @@ const (
 )
 
 // ErrNotCollection reports a directory that holds no opencollection.yml.
-var ErrNotCollection = errors.New("not a Bruno YAML collection: no " + collectionFile + " (the .bru format is not supported)")
+var ErrNotCollection = errors.New("not a Bruno collection: no opencollection.yml or bruno.json")
 
 // Collection is a loaded collection: its folder tree, environments and the .env next to it.
 type Collection struct {
@@ -42,6 +42,7 @@ type Collection struct {
 
 // Folder is a directory of requests; folder.yml may add defaults that its requests inherit.
 type Folder struct {
+	format   string
 	Name     string
 	Seq      int
 	Dir      string
@@ -169,9 +170,10 @@ type Request struct {
 	Settings   Settings
 	Docs       string
 
-	Path   string
-	Folder *Folder
-	doc    *yaml.Node
+	Path      string
+	Folder    *Folder
+	doc       *yaml.Node
+	bruSource string
 }
 
 // Chain returns the folders a request inherits from, collection root first.
@@ -202,10 +204,11 @@ func (r *Request) HasTag(tag string) bool { return slices.Contains(r.Tags, tag) 
 
 // Environment is one file in environments/.
 type Environment struct {
-	Name string
-	Vars []EnvVar
-	Path string
-	doc  *yaml.Node
+	Name      string
+	Vars      []EnvVar
+	Path      string
+	doc       *yaml.Node
+	bruSource string
 }
 
 // Clone copies the environment's variables; the copy saves to the same file.
@@ -250,15 +253,19 @@ func Load(dir string) (*Collection, error) {
 		return nil, err
 	}
 	doc, err := readYAML(filepath.Join(dir, collectionFile))
+	var raw rawCollection
+	format := ".yml"
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%s: %w", dir, ErrNotCollection)
+		raw, err = readBruCollection(dir)
+		format = ".bru"
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%s: %w", dir, ErrNotCollection)
+		}
+	} else if err == nil {
+		err = doc.Decode(&raw)
 	}
 	if err != nil {
 		return nil, err
-	}
-	var raw rawCollection
-	if err := doc.Decode(&raw); err != nil {
-		return nil, fmt.Errorf("%s: %w", collectionFile, err)
 	}
 	c := &Collection{
 		Name:   cmp.Or(raw.Info.Name, filepath.Base(dir)),
@@ -266,7 +273,7 @@ func Load(dir string) (*Collection, error) {
 		Docs:   docsText(&raw.Docs),
 		Config: raw.Config,
 	}
-	c.Root = &Folder{Name: c.Name, Dir: dir, Defaults: raw.Request.defaults(), Docs: c.Docs}
+	c.Root = &Folder{Name: c.Name, Dir: dir, Defaults: raw.Request.defaults(), Docs: c.Docs, format: format}
 
 	ignore := map[string]bool{"node_modules": true, ".git": true, envDir: true}
 	for _, name := range raw.Extensions.Bruno.Ignore {
@@ -307,7 +314,7 @@ func (c *Collection) loadFolder(f *Folder, ignore map[string]bool) error {
 				return err
 			}
 			f.Folders = append(f.Folders, sub)
-		case name == folderFile, f == c.Root && name == collectionFile, filepath.Ext(name) != ".yml":
+		case name == folderFile, name == "folder.bru", f == c.Root && (name == collectionFile || name == "collection.bru"), !slices.Contains([]string{".yml", ".yaml", ".bru"}, filepath.Ext(name)):
 		default:
 			// Like Bruno, a file that cannot be read is skipped with a warning; the rest still loads.
 			r, err := readRequest(path)
@@ -325,8 +332,9 @@ func (c *Collection) loadFolder(f *Folder, ignore map[string]bool) error {
 }
 
 func (c *Collection) readFolder(dir string, parent *Folder) (*Folder, error) {
-	f := &Folder{Name: filepath.Base(dir), Dir: dir, Parent: parent, Defaults: Defaults{Auth: Auth{Mode: "inherit"}}}
-	doc, err := readYAML(filepath.Join(dir, folderFile))
+	f := &Folder{Name: filepath.Base(dir), Dir: dir, Parent: parent, Defaults: Defaults{Auth: Auth{Mode: "inherit"}}, format: parent.format}
+	name := "folder" + parent.format
+	doc, err := readYAML(filepath.Join(dir, name))
 	if errors.Is(err, os.ErrNotExist) {
 		return f, nil
 	}
@@ -355,7 +363,7 @@ func (c *Collection) loadEnvironments() error {
 		return err
 	}
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".yml" {
+		if e.IsDir() || !slices.Contains([]string{".yml", ".yaml", ".bru"}, filepath.Ext(e.Name())) {
 			continue
 		}
 		env, err := readEnvironment(filepath.Join(c.Dir, envDir, e.Name()))

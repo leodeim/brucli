@@ -33,6 +33,9 @@ func fresh(path string, cached *yaml.Node) *yaml.Node {
 
 // Save writes the request back to its file. Keys brucli does not model stay as they are on disk.
 func (r *Request) Save() error {
+	if filepath.Ext(r.Path) == ".bru" {
+		return r.saveBru()
+	}
 	r.doc = fresh(r.Path, r.doc)
 	set(child(r.doc, "info", requestKeys), "name", scalar(r.Name), infoKeys)
 	kind := r.Kind
@@ -69,6 +72,9 @@ func (r *Request) Save() error {
 
 // Save writes the environment back to its file. A secret's value is never written.
 func (e *Environment) Save() error {
+	if filepath.Ext(e.Path) == ".bru" {
+		return e.saveBru()
+	}
 	e.doc = fresh(e.Path, e.doc)
 	set(e.doc, "name", scalar(e.Name), envKeys)
 	var items []*yaml.Node
@@ -351,6 +357,9 @@ func needsQuotes(s string) bool {
 }
 
 func add(m *yaml.Node, key string, v *yaml.Node) {
+	if v == nil {
+		return
+	}
 	m.Content = append(m.Content, scalar(key), v)
 }
 

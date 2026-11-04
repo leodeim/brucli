@@ -169,6 +169,15 @@ func readRequest(path string) (*Request, error) {
 	if err != nil {
 		return nil, err
 	}
+	r, err := requestFromNode(path, doc)
+	if err == nil && filepath.Ext(path) == ".bru" {
+		data, _ := os.ReadFile(path)
+		r.bruSource = string(data)
+	}
+	return r, err
+}
+
+func requestFromNode(path string, doc *yaml.Node) (*Request, error) {
 	var raw rawRequest
 	if err := doc.Decode(&raw); err != nil {
 		return nil, err
@@ -309,7 +318,11 @@ func readEnvironment(path string) (*Environment, error) {
 	}
 	env := &Environment{Name: raw.Name, Path: path, doc: doc}
 	if env.Name == "" {
-		env.Name = strings.TrimSuffix(filepath.Base(path), ".yml")
+		env.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
+	if filepath.Ext(path) == ".bru" {
+		data, _ := os.ReadFile(path)
+		env.bruSource = string(data)
 	}
 	for _, v := range raw.Variables {
 		env.Vars = append(env.Vars, EnvVar{KV: v.kv(), Secret: v.Secret})
@@ -336,6 +349,9 @@ func readYAML(path string) (*yaml.Node, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
+	}
+	if filepath.Ext(path) == ".bru" {
+		return bruNode(path, b)
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {

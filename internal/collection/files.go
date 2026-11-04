@@ -1,6 +1,7 @@
 package collection
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -110,7 +111,7 @@ func (f *Folder) freePath(name string) (string, error) {
 	if base == "" || base[0] == '.' || strings.EqualFold(base, "folder") {
 		return "", fmt.Errorf("unusable request name %q (no leading dot, not \"folder\")", name)
 	}
-	path := filepath.Join(f.Dir, base+".yml")
+	path := filepath.Join(f.Dir, base+cmp.Or(f.format, ".yml"))
 	if _, err := os.Stat(path); err == nil {
 		return path, fmt.Errorf("%s: %w", filepath.Base(path), ErrExists)
 	}

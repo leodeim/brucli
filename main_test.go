@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,39 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestRunBruCollection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, password, ok := r.BasicAuth()
+		if !ok || user != "user" || password != "secret" || r.Header.Get("X-Folder") != "inherited" || r.Method != "POST" {
+			t.Errorf("request: %s, %s, %s, %v", r.Method, user, password, r.Header)
+		}
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	files := map[string]string{
+		"bruno.json":             `{"name":"Bru test","version":"1"}`,
+		"collection.bru":         "auth {\n  mode: basic\n}\n\nauth:basic {\n  username: user\n  password: {{password}}\n}\n",
+		"Users/folder.bru":       "headers {\n  X-Folder: inherited\n}\n",
+		"Users/Create.bru":       "meta {\n  name: Create\n  type: http\n  seq: 1\n}\n\npost {\n  url: " + srv.URL + "\n  auth: inherit\n  body: json\n}\n\nbody:json {\n  {\"name\":\"Ada\"}\n}\n",
+		"environments/local.bru": "vars {\n  password: secret\n}\n",
+	}
+	for name, data := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out, errOut bytes.Buffer
+	code, err := run([]string{"run", "-env", "local", dir}, &out, &errOut)
+	if code != 0 || err != nil || !strings.Contains(out.String(), "POST   Users/Create  200") {
+		t.Fatalf("code %d error %v\n%s\n%s", code, err, &out, &errOut)
+	}
+}
 
 func fixture(t *testing.T) string {
 	t.Helper()
