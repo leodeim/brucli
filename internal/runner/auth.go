@@ -91,6 +91,7 @@ type signingTransport struct {
 type originAuthTransport struct {
 	base, authorized http.RoundTripper
 	origin           *url.URL
+	sensitiveHeaders []string
 }
 
 func (t originAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -100,7 +101,18 @@ func (t originAuthTransport) RoundTrip(req *http.Request) (*http.Response, error
 	copy := req.Clone(req.Context())
 	copy.Header.Del("Authorization")
 	copy.Header.Del("X-WSSE")
+	for _, name := range t.sensitiveHeaders {
+		copy.Header.Del(name)
+	}
 	return t.base.RoundTrip(copy)
+}
+
+func (s *Session) authHeaders(r *collection.Request, scope *vars.Scope) []string {
+	auth := s.resolvedAuth(r, scope)
+	if auth.Mode == "apikey" && auth.Placement != "query" {
+		return []string{scope.Interpolate(auth.Key)}
+	}
+	return nil
 }
 
 func sameOrigin(a, b *url.URL) bool {

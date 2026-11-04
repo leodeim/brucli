@@ -103,15 +103,13 @@ func (s *Session) oauth2Auth(ctx context.Context, auth collection.Auth, sent *sc
 		s.tokens = map[string]*oauth2.Token{}
 	}
 	s.tokens[key] = token
-	queryKey := authValue(auth, "tokenConfig.placement.query", "tokenQueryKey")
-	placement := authValue(auth, "tokenPlacement")
-	if queryKey != "" || placement == "query" || placement == "queryparams" || placement == "url" {
+	if queryKey, queryPlacement := oauth2QueryKey(auth); queryPlacement {
 		u, err := url.Parse(sent.URL)
 		if err != nil {
 			return err
 		}
 		query := u.Query()
-		query.Set(cmp.Or(queryKey, "access_token"), token.AccessToken)
+		query.Set(queryKey, token.AccessToken)
 		u.RawQuery = query.Encode()
 		sent.URL = u.String()
 	} else {
@@ -119,6 +117,12 @@ func (s *Session) oauth2Auth(ctx context.Context, auth collection.Auth, sent *sc
 		sent.SetHeader("Authorization", prefix+" "+token.AccessToken)
 	}
 	return nil
+}
+
+func oauth2QueryKey(auth collection.Auth) (string, bool) {
+	key := authValue(auth, "tokenConfig.placement.query", "tokenQueryKey")
+	placement := authValue(auth, "tokenPlacement")
+	return cmp.Or(key, "access_token"), key != "" || placement == "query" || placement == "queryparams" || placement == "url"
 }
 
 type oauthLoginResult struct{ code, accessToken, tokenType, error string }

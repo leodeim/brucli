@@ -481,20 +481,14 @@ func (s *Session) draft(r *collection.Request, chain []*collection.Folder, res *
 		mergeHeaders(d, f.Defaults.Headers)
 	}
 	mergeHeaders(d, r.Headers)
-	// Like Bruno, bearer and API key auth are set before the scripts run, so scripts see and may
-	// override them; basic auth is applied last (finalize) and always wins.
+	// Scripts can inspect and replace bearer and header API key authentication.
+	// Query credentials are added after interpolation so delimiters stay in the value.
 	switch auth, _ := EffectiveAuth(r); auth.Mode {
 	case "none", "basic", "digest", "ntlm", "oauth1", "oauth2", "awsv4", "wsse", "akamai-edgegrid":
 	case "bearer":
 		d.SetHeader("Authorization", "Bearer "+auth.Token)
 	case "apikey":
-		if auth.Placement == "query" {
-			sep := "?"
-			if strings.Contains(d.URL, "?") {
-				sep = "&"
-			}
-			d.URL += sep + auth.Key + "=" + auth.Value
-		} else {
+		if auth.Placement != "query" {
 			d.SetHeader(auth.Key, auth.Value)
 		}
 	default:
@@ -608,6 +602,16 @@ func (s *Session) finalize(r *collection.Request, chain []*collection.Folder, d 
 		unresolved = append(unresolved, scope.Unresolved(auth.Username+"\n"+auth.Password)...)
 	}
 	out.URL = u.String()
+	if auth, _ := EffectiveAuth(r); auth.Mode == "apikey" && auth.Placement == "query" {
+		query := encodeComponent(in(auth.Key)) + "=" + encodeComponent(in(auth.Value))
+		if u.RawQuery != "" {
+			u.RawQuery += "&" + query
+		} else {
+			u.RawQuery = query
+		}
+		out.URL = u.String()
+		unresolved = append(unresolved, scope.Unresolved(auth.Key+"\n"+auth.Value)...)
+	}
 	if r.Body.Mode == "graphql" {
 		if err := graphqlBody(r, out, scope); err != nil {
 			return out, err
@@ -736,7 +740,7 @@ func (s *Session) send(ctx context.Context, sent *script.Request, settings colle
 		}
 		authorized = signer
 	}
-	client.Transport = originAuthTransport{base: base, authorized: authorized, origin: req.URL}
+	client.Transport = originAuthTransport{base: base, authorized: authorized, origin: req.URL, sensitiveHeaders: s.authHeaders(res.Request, scope)}
 	client.CheckRedirect = func(redirect *http.Request, via []*http.Request) error {
 		if !sameOrigin(redirect.URL, req.URL) {
 			redirect.Header.Del("Authorization")
@@ -815,6 +819,22 @@ func LooksSecret(name string) bool {
 // environment variables and of variables whose names look secret, wherever it appears.
 func (s *Session) Mask(r *collection.Request, sent *script.Request) *script.Request {
 	scope := s.Scope(r)
+	queryCredentials := map[string]bool{}
+	headerCredentials := map[string]bool{}
+	if r != nil {
+		auth := s.resolvedAuth(r, scope)
+		if auth.Mode == "apikey" {
+			if auth.Placement == "query" {
+				queryCredentials[scope.Interpolate(auth.Key)] = true
+			} else {
+				headerCredentials[strings.ToLower(scope.Interpolate(auth.Key))] = true
+			}
+		} else if auth.Mode == "oauth2" {
+			if key, queryPlacement := oauth2QueryKey(auth); queryPlacement {
+				queryCredentials[key] = true
+			}
+		}
+	}
 	var values []string
 	note := func(v string) {
 		if v = scope.Interpolate(v); len(v) >= 4 && !slices.Contains(values, v) {
@@ -852,6 +872,21 @@ func (s *Session) Mask(r *collection.Request, sent *script.Request) *script.Requ
 			note(v.Raw)
 		}
 	}
+	maskedURL := sent.URL
+	if u, err := url.Parse(sent.URL); err == nil {
+		parts := strings.Split(u.RawQuery, "&")
+		for i, part := range parts {
+			key, value, found := strings.Cut(part, "=")
+			name, _ := url.QueryUnescape(key)
+			if found && queryCredentials[name] {
+				decoded, _ := url.QueryUnescape(value)
+				note(decoded)
+				parts[i] = key + "=****"
+			}
+		}
+		u.RawQuery = strings.Join(parts, "&")
+		maskedURL = u.String()
+	}
 	slices.SortFunc(values, func(a, b string) int { return len(b) - len(a) })
 	hide := func(str string) string {
 		for _, v := range values {
@@ -862,7 +897,7 @@ func (s *Session) Mask(r *collection.Request, sent *script.Request) *script.Requ
 		return str
 	}
 	c := *sent
-	c.URL, c.Body = hide(sent.URL), hide(sent.Body)
+	c.URL, c.Body = hide(maskedURL), hide(sent.Body)
 	c.Headers = slices.Clone(sent.Headers)
 	for i, h := range c.Headers {
 		switch strings.ToLower(h.Name) {
@@ -875,7 +910,11 @@ func (s *Session) Mask(r *collection.Request, sent *script.Request) *script.Requ
 		case "cookie", "x-wsse":
 			c.Headers[i].Value = "****"
 		default:
-			c.Headers[i].Value = hide(h.Value)
+			if headerCredentials[strings.ToLower(h.Name)] {
+				c.Headers[i].Value = "****"
+			} else {
+				c.Headers[i].Value = hide(h.Value)
+			}
 		}
 	}
 	return &c

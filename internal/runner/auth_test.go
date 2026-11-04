@@ -207,3 +207,37 @@ func TestAuthDoesNotFollowCredentialsAcrossOrigins(t *testing.T) {
 		})
 	}
 }
+
+func TestAPIKeyHeaderDoesNotFollowRedirect(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Api-Key"); got != "" {
+			t.Errorf("API key leaked to redirect destination: %q", got)
+		}
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "secret" {
+			t.Error("API key missing at origin")
+		}
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer origin.Close()
+	s, r := authRequest(t, origin.URL, collection.Auth{Mode: "apikey", Key: "X-Api-Key", Value: "secret", Placement: "header"})
+	if res := s.Execute(t.Context(), r); res.Err != nil {
+		t.Fatal(res.Err)
+	}
+}
+
+func TestAPIKeyQueryEscaping(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("key&name") != "a&b=#?+% {{literal}}" || r.URL.Query().Get("existing") != "yes" {
+			t.Errorf("corrupted API key query: %s", r.URL.RawQuery)
+		}
+	}))
+	defer srv.Close()
+	s, r := authRequest(t, srv.URL+"?existing=yes#section", collection.Auth{Mode: "apikey", Key: "key&name", Value: "{{credential}}", Placement: "query"})
+	s.Runtime["credential"] = "a&b=#?+% {{literal}}"
+	if res := s.Execute(t.Context(), r); res.Err != nil {
+		t.Fatal(res.Err)
+	}
+}

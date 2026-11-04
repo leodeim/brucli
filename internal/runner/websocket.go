@@ -47,7 +47,7 @@ func (s *Session) sendWebSocket(ctx context.Context, r *collection.Request, sent
 	if err != nil {
 		return nil, err
 	}
-	client.Transport = originAuthTransport{base: base, authorized: authorized, origin: handshake.URL}
+	client.Transport = originAuthTransport{base: base, authorized: authorized, origin: handshake.URL, sensitiveHeaders: s.authHeaders(r, scope)}
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if !r.Settings.FollowRedirects || len(via) > r.Settings.MaxRedirects {
 			return http.ErrUseLastResponse

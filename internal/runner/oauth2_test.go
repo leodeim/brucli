@@ -138,3 +138,32 @@ func TestOAuth2QueryPlacementAndHeadlessError(t *testing.T) {
 		t.Fatalf("headless OAuth result: %+v", res)
 	}
 }
+
+func TestMaskFetchedOAuth2QueryToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/token" {
+			fmt.Fprint(w, `{"access_token":"fetched-secret","token_type":"Bearer","expires_in":3600}`)
+			return
+		}
+		if r.URL.Query().Get("custom_key") != "fetched-secret" {
+			t.Error("missing fetched query token")
+		}
+		fmt.Fprint(w, `{}`)
+	}))
+	defer srv.Close()
+	s, r := authRequest(t, srv.URL, collection.Auth{Mode: "oauth2", Options: map[string]string{
+		"flow": "client_credentials", "accessTokenUrl": srv.URL + "/token", "tokenConfig.placement.query": "custom_key",
+	}})
+	res := s.Execute(t.Context(), r)
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	masked := s.Mask(r, res.Sent)
+	if strings.Contains(masked.URL, "fetched-secret") || !strings.Contains(masked.URL, "****") {
+		t.Fatalf("fetched token exposed in masked URL: %s", masked.URL)
+	}
+	if !strings.Contains(res.Sent.URL, "fetched-secret") {
+		t.Fatal("masking changed the sent request")
+	}
+}
