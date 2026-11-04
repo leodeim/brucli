@@ -57,11 +57,18 @@ type rawKV struct {
 	Description yaml.Node `yaml:"description"`
 	Disabled    bool      `yaml:"disabled"`
 	Type        string    `yaml:"type"`
+	ContentType string    `yaml:"contentType"`
 	Secret      bool      `yaml:"secret"`
 }
 
 func (r rawKV) kv() KV {
-	kv := KV{Name: r.Name, Description: docsText(&r.Description), Enabled: !r.Disabled, described: r.Description.Kind != 0}
+	kv := KV{Name: r.Name, Type: r.Type, ContentType: r.ContentType, Description: docsText(&r.Description), Enabled: !r.Disabled, described: r.Description.Kind != 0}
+	if r.Value.Kind == yaml.SequenceNode {
+		var files []string
+		_ = r.Value.Decode(&files)
+		kv.Value = strings.Join(files, "\n")
+		return kv
+	}
 	if r.Value.Kind == yaml.MappingNode {
 		var typed struct {
 			Data string `yaml:"data"`
@@ -102,6 +109,15 @@ func decodeScripts(raw []rawScript) Scripts {
 	return s
 }
 
+type rawHTTP struct {
+	Method  string    `yaml:"method"`
+	URL     string    `yaml:"url"`
+	Params  []rawKV   `yaml:"params"`
+	Headers []rawKV   `yaml:"headers"`
+	Body    yaml.Node `yaml:"body"`
+	Auth    yaml.Node `yaml:"auth"`
+}
+
 type rawRequest struct {
 	Info struct {
 		Name string   `yaml:"name"`
@@ -109,14 +125,8 @@ type rawRequest struct {
 		Seq  int      `yaml:"seq"`
 		Tags []string `yaml:"tags"`
 	} `yaml:"info"`
-	HTTP struct {
-		Method  string    `yaml:"method"`
-		URL     string    `yaml:"url"`
-		Params  []rawKV   `yaml:"params"`
-		Headers []rawKV   `yaml:"headers"`
-		Body    yaml.Node `yaml:"body"`
-		Auth    yaml.Node `yaml:"auth"`
-	} `yaml:"http"`
+	HTTP    rawHTTP `yaml:"http"`
+	GraphQL rawHTTP `yaml:"graphql"`
 	Runtime struct {
 		Variables  []rawKV        `yaml:"variables"`
 		Scripts    []rawScript    `yaml:"scripts"`
@@ -162,10 +172,14 @@ func readRequest(path string) (*Request, error) {
 	if err := doc.Decode(&raw); err != nil {
 		return nil, err
 	}
-	if raw.Info.Type != "http" {
+	if raw.Info.Type != "http" && raw.Info.Type != "graphql" {
 		return nil, fmt.Errorf("%w %q", errUnsupported, raw.Info.Type)
 	}
+	if raw.Info.Type == "graphql" {
+		raw.HTTP = raw.GraphQL
+	}
 	r := &Request{
+		Kind:    raw.Info.Type,
 		Name:    raw.Info.Name,
 		Seq:     raw.Info.Seq,
 		Tags:    raw.Info.Tags,
@@ -179,6 +193,18 @@ func readRequest(path string) (*Request, error) {
 		Docs:    docsText(&raw.Docs),
 		Path:    path,
 		doc:     doc,
+	}
+	if r.Kind == "graphql" {
+		var body struct {
+			Query         string `yaml:"query"`
+			Variables     string `yaml:"variables"`
+			OperationName string `yaml:"operationName"`
+		}
+		if err := raw.HTTP.Body.Decode(&body); err != nil {
+			return nil, fmt.Errorf("GraphQL body: %w", err)
+		}
+		r.Body = Body{Mode: "graphql", Data: body.Query, Variables: body.Variables, OperationName: body.OperationName}
+		r.Method = strings.ToUpper(cmp.Or(raw.HTTP.Method, "POST"))
 	}
 	for _, p := range raw.HTTP.Params {
 		r.Params = append(r.Params, Param{KV: p.kv(), Type: cmp.Or(p.Type, "query")})
@@ -258,7 +284,7 @@ func decodeBody(n *yaml.Node) Body {
 	switch b.Mode {
 	case "json", "text", "xml", "sparql":
 		b.Data = head.Data.Value
-	case "form-urlencoded":
+	case "form-urlencoded", "multipart-form":
 		var form []rawKV
 		_ = head.Data.Decode(&form)
 		b.Form = kvs(form)

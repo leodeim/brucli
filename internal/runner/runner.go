@@ -429,7 +429,7 @@ func (s *Session) draft(r *collection.Request, chain []*collection.Folder, res *
 		res.Warnings = append(res.Warnings, fmt.Sprintf("auth %q is not supported; sent without auth", auth.Mode))
 	}
 	switch r.Body.Mode {
-	case "json", "text", "xml", "sparql":
+	case "json", "text", "xml", "sparql", "graphql":
 		d.Body = r.Body.Data
 		if _, ok := d.Header("Content-Type"); !ok {
 			d.Headers = append(d.Headers, script.Header{Name: "Content-Type", Value: contentTypes[r.Body.Mode]})
@@ -438,7 +438,7 @@ func (s *Session) draft(r *collection.Request, chain []*collection.Folder, res *
 		if _, ok := d.Header("Content-Type"); !ok {
 			d.Headers = append(d.Headers, script.Header{Name: "Content-Type", Value: "application/x-www-form-urlencoded"})
 		}
-	case "none", "":
+	case "multipart-form", "none", "":
 	default:
 		res.Warnings = append(res.Warnings, fmt.Sprintf("body type %q is not supported; sent without a body", r.Body.Mode))
 	}
@@ -446,10 +446,11 @@ func (s *Session) draft(r *collection.Request, chain []*collection.Folder, res *
 }
 
 var contentTypes = map[string]string{
-	"json":   "application/json",
-	"text":   "text/plain",
-	"xml":    "application/xml",
-	"sparql": "application/sparql-query",
+	"json":    "application/json",
+	"text":    "text/plain",
+	"xml":     "application/xml",
+	"sparql":  "application/sparql-query",
+	"graphql": "application/json",
 }
 
 func mergeHeaders(d *script.Request, kvs []collection.KV) {
@@ -497,6 +498,16 @@ func (s *Session) finalize(r *collection.Request, chain []*collection.Folder, d 
 		}
 		out.Body = strings.Join(form, "&")
 	}
+	if r.Body.Mode == "multipart-form" && d.Body == "" {
+		if err := s.multipartBody(r, out, scope); err != nil {
+			return out, err
+		}
+		for _, field := range r.Body.Form {
+			if field.Enabled {
+				unresolved = append(unresolved, scope.Unresolved(field.Name+"\n"+field.Value+"\n"+field.ContentType)...)
+			}
+		}
+	}
 
 	raw := in(d.URL)
 	for _, p := range r.Params {
@@ -522,6 +533,12 @@ func (s *Session) finalize(r *collection.Request, chain []*collection.Folder, d 
 		unresolved = append(unresolved, scope.Unresolved(auth.Username+"\n"+auth.Password)...)
 	}
 	out.URL = u.String()
+	if r.Body.Mode == "graphql" {
+		if err := graphqlBody(r, out, scope); err != nil {
+			return out, err
+		}
+		unresolved = append(unresolved, scope.Unresolved(r.Body.Variables+"\n"+r.Body.OperationName)...)
+	}
 	slices.Sort(unresolved)
 	res.Unresolved = slices.Compact(unresolved)
 	return out, nil

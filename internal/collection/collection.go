@@ -61,6 +61,8 @@ type Defaults struct {
 type KV struct {
 	Name        string
 	Value       string
+	Type        string
+	ContentType string
 	Description string
 	Enabled     bool
 	// typed keeps a {type, data} value as written, so saving an unchanged typed variable keeps its type.
@@ -103,10 +105,12 @@ func (a Auth) Supported() bool {
 // Body is a request body. Raw modes keep Data; form modes keep Form.
 type Body struct {
 	// Mode is none, json, text, xml, sparql, form-urlencoded, multipart-form, or another Bruno mode kept as written.
-	Mode string
-	Data string
-	Form []KV
-	raw  *yaml.Node
+	Mode          string
+	Data          string
+	Form          []KV
+	Variables     string
+	OperationName string
+	raw           *yaml.Node
 }
 
 // Scripts are the JavaScript hooks of a request, folder or collection.
@@ -145,6 +149,7 @@ type Settings struct {
 
 // Request is one HTTP request file.
 type Request struct {
+	Kind       string
 	Name       string
 	Seq        int
 	Tags       []string

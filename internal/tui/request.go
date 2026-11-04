@@ -31,10 +31,10 @@ var reqTabNames = []string{"Params", "Body", "Headers", "Auth", "Vars", "Scripts
 
 var (
 	methods   = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
-	bodyModes = []string{"none", "json", "text", "xml", "form-urlencoded"}
+	bodyModes = []string{"none", "json", "text", "xml", "form-urlencoded", "multipart-form", "graphql"}
 	authModes = []string{"inherit", "none", "basic", "bearer", "apikey"}
 	operators = []string{"eq", "neq", "gt", "gte", "lt", "lte", "in", "notIn", "contains", "notContains", "length", "matches", "notMatches", "startsWith", "endsWith", "between", "isEmpty", "isNotEmpty", "isNull", "isUndefined", "isDefined", "isTruthy", "isFalsy", "isJson", "isNumber", "isString", "isBoolean", "isArray"}
-	bodyExt   = map[string]string{"json": ".json", "text": ".txt", "xml": ".xml", "sparql": ".sparql"}
+	bodyExt   = map[string]string{"json": ".json", "text": ".txt", "xml": ".xml", "sparql": ".sparql", "graphql": ".graphql"}
 )
 
 type requestPane struct {
@@ -527,9 +527,9 @@ func (m *Model) editBody() tea.Cmd {
 	switch mode := cmp.Or(r.Body.Mode, "none"); mode {
 	case "none":
 		return m.pickBodyType()
-	case "form-urlencoded":
+	case "form-urlencoded", "multipart-form":
 		m.setStatus(nil, "a form body: a adds a field, enter edits the selected one")
-	case "json", "text", "xml", "sparql":
+	case "json", "text", "xml", "sparql", "graphql":
 		m.openEditor("Body ("+mode+")", bodyLang(mode), r.Body.Data, func(v string) {
 			if v != r.Body.Data {
 				r.Body.Data = v
@@ -555,12 +555,18 @@ func (m *Model) pickBodyType() tea.Cmd {
 	items := []pickItem{
 		{"none", "no body"}, {"json", "application/json"}, {"text", "text/plain"},
 		{"xml", "application/xml"}, {"form-urlencoded", "application/x-www-form-urlencoded"},
+		{"multipart-form", "text fields and file uploads"}, {"graphql", "GraphQL query and variables"},
 	}
 	m.req.editor = nil
 	return m.choose("Body type", items, slices.Index(bodyModes, mode), func(i int) tea.Cmd {
 		next := bodyModes[i]
 		if next != mode {
 			r.Body.Mode = next
+			if next == "graphql" {
+				r.Kind, r.Method = "graphql", "POST"
+			} else if r.Kind == "graphql" {
+				r.Kind = "http"
+			}
 			m.changed(r)
 		}
 		if next == "none" {
@@ -611,11 +617,31 @@ func bodyTab(m *Model, r *collection.Request) tabSpec {
 		spec.rows = append(spec.rows, text(stMuted.Render("No body. enter picks a type and opens the editor.")))
 		spec.edit = m.pickBodyType
 		return spec
-	case "form-urlencoded":
+	case "form-urlencoded", "multipart-form":
 		onChange := func() { m.changed(r) }
 		spec.rows = append(spec.rows, kvRows(m, &r.Body.Form, "form field", onChange)...)
 		spec.add, spec.addLabel = addKV(m, "form field", &r.Body.Form, onChange), "Add form field"
+		if mode == "multipart-form" {
+			for i := range r.Body.Form {
+				field := &r.Body.Form[i]
+				spec.rows = append(spec.rows, row{line: field.Name + stMuted.Render(" type: ") + cmp.Or(field.Type, "text"), sel: true, what: "field type", edit: func() tea.Cmd {
+					return m.choose("Field type", []pickItem{{"text", "send a text value"}, {"file", "upload files, one collection-relative path per line"}}, 0, func(i int) tea.Cmd {
+						field.Type = []string{"text", "file"}[i]
+						onChange()
+						if i == 1 {
+							m.openEditor("File paths: "+field.Name, "text", field.Value, func(value string) { field.Value = value; onChange() })
+						}
+						return nil
+					})
+				}})
+			}
+		}
 		return spec
+	case "graphql":
+		spec.rows = append(spec.rows, row{line: stInfo.Render("Variables (JSON)"), sel: true, what: "GraphQL variables", edit: func() tea.Cmd {
+			m.openEditor("GraphQL variables", "json", r.Body.Variables, func(value string) { r.Body.Variables = value; m.changed(r) })
+			return nil
+		}})
 	case "json", "text", "xml", "sparql":
 	default:
 		spec.rows = append(spec.rows, text(stWarn.Render("brucli cannot edit or send this body type; it is kept in the file as written.")))

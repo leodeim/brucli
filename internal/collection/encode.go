@@ -13,7 +13,7 @@ import (
 
 // Key orders Bruno writes; a key brucli adds goes before the first existing key that follows it here.
 var (
-	requestKeys = []string{"info", "http", "runtime", "settings", "examples", "docs"}
+	requestKeys = []string{"info", "http", "graphql", "grpc", "websocket", "runtime", "settings", "examples", "docs"}
 	infoKeys    = []string{"name", "type", "seq", "tags"}
 	httpKeys    = []string{"method", "url", "params", "headers", "body", "auth"}
 	runtimeKeys = []string{"variables", "scripts", "assertions", "actions"}
@@ -35,7 +35,19 @@ func fresh(path string, cached *yaml.Node) *yaml.Node {
 func (r *Request) Save() error {
 	r.doc = fresh(r.Path, r.doc)
 	set(child(r.doc, "info", requestKeys), "name", scalar(r.Name), infoKeys)
-	http := child(r.doc, "http", requestKeys)
+	kind := r.Kind
+	if kind == "" {
+		kind = "http"
+	}
+	info := child(r.doc, "info", requestKeys)
+	if i := lookup(info, "type"); i >= 0 {
+		old := info.Content[i+1].Value
+		if old != kind && (old == "http" || old == "graphql") {
+			set(r.doc, old, nil, requestKeys)
+		}
+	}
+	set(child(r.doc, "info", requestKeys), "type", scalar(kind), infoKeys)
+	http := child(r.doc, kind, requestKeys)
 	set(http, "method", scalar(r.Method), httpKeys)
 	set(http, "url", scalar(r.URL), httpKeys)
 	set(http, "params", paramsNode(r.Params), httpKeys)
@@ -118,7 +130,13 @@ func kvsNode(kvs []KV) *yaml.Node {
 	for _, kv := range kvs {
 		n := mapping()
 		add(n, "name", scalar(kv.Name))
+		if kv.Type == "file" || kv.Type == "text" {
+			add(n, "type", scalar(kv.Type))
+		}
 		add(n, "value", valueNode(kv))
+		if kv.ContentType != "" {
+			add(n, "contentType", scalar(kv.ContentType))
+		}
 		describe(n, kv)
 		items = append(items, n)
 	}
@@ -135,6 +153,15 @@ func describe(n *yaml.Node, kv KV) {
 }
 
 func valueNode(kv KV) *yaml.Node {
+	if kv.Type == "file" {
+		var files []*yaml.Node
+		for _, path := range strings.Split(kv.Value, "\n") {
+			if path != "" {
+				files = append(files, scalar(path))
+			}
+		}
+		return sequence(files)
+	}
 	switch {
 	case kv.typed == nil:
 		return scalar(kv.Value)
@@ -151,9 +178,17 @@ func bodyNode(b Body) *yaml.Node {
 		return b.raw
 	}
 	switch b.Mode {
+	case "graphql":
+		n := mapping()
+		add(n, "query", scalar(b.Data))
+		add(n, "variables", scalar(b.Variables))
+		if b.OperationName != "" {
+			add(n, "operationName", scalar(b.OperationName))
+		}
+		return n
 	case "", "none":
 		return nil
-	case "form-urlencoded":
+	case "form-urlencoded", "multipart-form":
 		n := mapping()
 		add(n, "type", scalar(b.Mode))
 		if len(b.Form) > 0 {
