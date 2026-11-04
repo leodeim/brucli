@@ -7,7 +7,6 @@ on:
     tags:
       - "v*"
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -40,15 +39,33 @@ jobs:
       - name: Run tests
         run: go test -race ./...
 
-  build:
-    name: Build release binaries
+  release:
+    name: Build and publish release
     needs: test
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    # Serialize releases so pushes to main cannot choose the same next tag.
+    concurrency:
+      group: release
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Determine release tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          else
+            latest=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+            latest=${latest:-v0.0.0}
+            IFS=. read -r major minor patch <<<"${latest#v}"
+            echo "RELEASE_TAG=v${major}.${minor}.$((patch + 1))" >> "$GITHUB_ENV"
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -67,3 +84,16 @@ jobs:
       - name: Create checksums
         working-directory: dist
         run: sha256sum brucli_* > checksums.txt
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" dist/* --clobber
+          else
+            gh release create "${RELEASE_TAG}" dist/* \
+              --target "$GITHUB_SHA" \
+              --generate-notes \
+              --title "brucli ${RELEASE_TAG}"
+          fi
