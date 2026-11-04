@@ -1,6 +1,6 @@
 module github.com/leodeim/brucli
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/Azure/go-ntlmssp v0.1.1

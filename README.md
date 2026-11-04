@@ -61,7 +61,7 @@ Download a binary from the [latest release](https://github.com/leodeim/brucli/re
 
 Rename the downloaded file to `brucli`, run `chmod +x brucli`, and move it to a directory on your `PATH`. Each release includes a `checksums.txt` file with SHA-256 checksums.
 
-You can also install with Go 1.26 or newer:
+You can also install with Go 1.26.10 or newer:
 
 ```sh
 go install github.com/leodeim/brucli@latest
