@@ -1,0 +1,42 @@
+info:
+  name: ListUsers
+  type: http
+  seq: 1
+  tags:
+    - read
+
+http:
+  method: GET
+  url: "{{baseUrl}}/v1/users?created_after=2024-01-01T00:00:00Z"
+  params:
+    - name: created_after
+      value: 2024-01-01T00:00:00Z
+      type: query
+      description: Only users who joined after this time.
+    - name: limit
+      value: "50"
+      type: query
+      description: 0 means 50.
+      disabled: true
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        const users = res.body?.users || [];
+        const user = users.find((u) => u.name === 'Ada') || users[0];
+        if (user) bru.setVar('userId', user.id);
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: Returns the users.

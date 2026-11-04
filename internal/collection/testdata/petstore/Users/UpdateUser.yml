@@ -1,0 +1,31 @@
+info:
+  name: UpdateUser
+  type: http
+  seq: 2
+  tags:
+    - write
+
+http:
+  method: PATCH
+  url: "{{baseUrl}}/v1/users/:userId"
+  params:
+    - name: userId
+      value: "{{userId}}"
+      type: path
+  body:
+    type: json
+    data: |-
+      {
+        "display_name": "Ada L.",
+        "newsletter": true
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: Updates a user's profile.

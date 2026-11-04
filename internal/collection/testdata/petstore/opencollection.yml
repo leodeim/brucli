@@ -1,0 +1,36 @@
+opencollection: 1.0.0
+
+info:
+  name: petstore
+  version: "1"
+
+request:
+  headers:
+    - name: X-Api-Version
+      value: "2"
+  auth:
+    type: basic
+    username: "{{username}}"
+    password: "{{password}}"
+  variables:
+    - name: ownerId
+      value: 11111111-2222-4333-8444-555555555555
+    - name: sellerId
+      value: "{{ownerId}}"
+
+docs:
+  content: |
+    # Petstore
+
+    A small sample collection for brucli's tests: the classic pet shop example API.
+
+    ```bash
+    bru run --env local --tags read
+    ```
+  type: text/markdown
+bundled: false
+extensions:
+  bruno:
+    ignore:
+      - node_modules
+      - .git

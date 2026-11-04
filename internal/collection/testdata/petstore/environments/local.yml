@@ -1,0 +1,17 @@
+name: local
+variables:
+  - name: port
+    value: "8080"
+    description: Port of the local server, e.g. 8080 for http://localhost:8080
+  - name: baseUrl
+    value: http://localhost:{{port}}
+    description: ""
+  - name: username
+    value: "{{process.env.PETSTORE_USERNAME}}"
+    description: ""
+  - name: password
+    value: "{{process.env.PETSTORE_PASSWORD}}"
+    description: ""
+  - name: petId
+    value: "1"
+    description: A pet the seed data creates

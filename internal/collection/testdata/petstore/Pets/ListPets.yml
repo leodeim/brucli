@@ -1,0 +1,50 @@
+info:
+  name: ListPets
+  type: http
+  seq: 1
+  tags:
+    - read
+
+http:
+  method: GET
+  url: "{{baseUrl}}/v1/pets?limit=20"
+  params:
+    - name: limit
+      value: "20"
+      type: query
+      description: Page size, 1 to 100.
+    - name: name
+      value: ""
+      type: query
+      description: |-
+        name filters pets by a case-insensitive substring of their name.
+        Empty = no filter.
+      disabled: true
+    - name: status
+      value: available
+      type: query
+      description: status filters pets by their status.
+      disabled: true
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        const pet = res.body?.pets?.[0];
+        if (pet) {
+          bru.setVar('petId', pet.id);
+        }
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: Returns a page of pets, newest first.

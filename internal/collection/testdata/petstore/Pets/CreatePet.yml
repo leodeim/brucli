@@ -1,0 +1,40 @@
+info:
+  name: CreatePet
+  type: http
+  seq: 3
+  tags:
+    - write
+
+http:
+  method: POST
+  url: "{{baseUrl}}/v1/pets"
+  body:
+    type: json
+    data: |-
+      {
+        "name": "Rex",
+        "species": "dog",
+        "tags": [
+          "friendly",
+          "vaccinated"
+        ],
+        "owner_id": "{{ownerId}}"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: if (res.body?.pet) bru.setVar('petId', res.body.pet.id);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Adds a pet to the store.
+
+  The response carries the new pet; its id becomes petId.

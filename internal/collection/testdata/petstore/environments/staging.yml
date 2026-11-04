@@ -1,0 +1,11 @@
+name: staging
+variables:
+  - name: baseUrl
+    value: https://staging.petstore.example
+  - name: username
+    value: "{{process.env.PETSTORE_STAGING_USERNAME}}"
+  - name: password
+    value: "{{process.env.PETSTORE_STAGING_PASSWORD}}"
+  - name: petId
+    value: ""
+    description: A pet that exists on staging
