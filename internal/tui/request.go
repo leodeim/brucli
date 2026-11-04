@@ -32,7 +32,7 @@ var reqTabNames = []string{"Params", "Body", "Headers", "Auth", "Vars", "Scripts
 var (
 	methods   = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 	bodyModes = []string{"none", "json", "text", "xml", "form-urlencoded", "multipart-form", "graphql"}
-	authModes = []string{"inherit", "none", "basic", "bearer", "apikey"}
+	authModes = []string{"inherit", "none", "basic", "bearer", "apikey", "digest", "ntlm", "oauth1", "oauth2", "awsv4", "wsse", "akamai-edgegrid"}
 	operators = []string{"eq", "neq", "gt", "gte", "lt", "lte", "in", "notIn", "contains", "notContains", "length", "matches", "notMatches", "startsWith", "endsWith", "between", "isEmpty", "isNotEmpty", "isNull", "isUndefined", "isDefined", "isTruthy", "isFalsy", "isJson", "isNumber", "isString", "isBoolean", "isArray"}
 	bodyExt   = map[string]string{"json": ".json", "text": ".txt", "xml": ".xml", "sparql": ".sparql", "graphql": ".graphql"}
 )
@@ -596,10 +596,22 @@ func (m *Model) pickAuthMode() tea.Cmd {
 	items := []pickItem{
 		{"inherit", "use the folder's or the collection's auth"}, {"none", "send no auth"},
 		{"basic", "username and password"}, {"bearer", "token"}, {"apikey", "key and value in a header or query"},
+		{"digest", "HTTP Digest"}, {"ntlm", "NTLM domain authentication"}, {"oauth1", "OAuth 1 request signing"}, {"oauth2", "OAuth 2 tokens and browser login"},
+		{"awsv4", "AWS Signature Version 4"}, {"wsse", "WSSE UsernameToken"}, {"akamai-edgegrid", "Akamai EdgeGrid request signing"},
 	}
 	return m.choose("Auth mode", items, slices.Index(authModes, a.Mode), func(i int) tea.Cmd {
 		if authModes[i] != a.Mode {
 			*a = collection.Auth{Mode: authModes[i], Username: a.Username, Password: a.Password, Token: a.Token, Key: a.Key, Value: a.Value, Placement: a.Placement}
+			a.Options = map[string]string{}
+			for key, value := range authDefaults(a.Mode) {
+				a.Options[key] = value
+			}
+			if _, ok := a.Options["username"]; ok {
+				a.Options["username"] = a.Username
+			}
+			if _, ok := a.Options["password"]; ok {
+				a.Options["password"] = a.Password
+			}
 			m.changed(r)
 		}
 		m.focus = focusRequest
@@ -709,7 +721,7 @@ func authTab(m *Model, r *collection.Request) tabSpec {
 	onChange := func() { m.changed(r) }
 	spec := tabSpec{edit: m.pickAuthMode, editWhat: "auth mode"}
 	spec.rows = append(spec.rows, row{line: stMuted.Render("mode ") + stBold.Render(a.Mode) + stMuted.Render(" ▾"), click: m.pickAuthMode})
-	field := func(label string, v *string, secret bool) row {
+	authField := func(label string, v *string, secret bool) row {
 		shown := markVars(*v)
 		if secret && !m.reveal && !strings.Contains(*v, "{{") && *v != "" {
 			shown = "••••••"
@@ -750,9 +762,9 @@ func authTab(m *Model, r *collection.Request) tabSpec {
 	case "none":
 		spec.rows = append(spec.rows, text(stMuted.Render("No auth.")))
 	case "basic":
-		spec.rows = append(spec.rows, field("username", &a.Username, false), field("password", &a.Password, true))
+		spec.rows = append(spec.rows, authField("username", &a.Username, false), authField("password", &a.Password, true))
 	case "bearer":
-		spec.rows = append(spec.rows, field("token", &a.Token, true))
+		spec.rows = append(spec.rows, authField("token", &a.Token, true))
 	case "apikey":
 		place := row{line: fmt.Sprintf("%-10s %s", "add to", cmp.Or(a.Placement, "header")), sel: true, what: "placement", toggle: func() {
 			a.Placement = map[string]string{"query": "header"}[a.Placement]
@@ -761,11 +773,67 @@ func authTab(m *Model, r *collection.Request) tabSpec {
 			}
 			onChange()
 		}}
-		spec.rows = append(spec.rows, field("key", &a.Key, false), field("value", &a.Value, true), place)
+		spec.rows = append(spec.rows, authField("key", &a.Key, false), authField("value", &a.Value, true), place)
 	default:
-		spec.rows = append(spec.rows, text(stWarn.Render("brucli cannot send this auth mode; it is kept in the file and the request goes without auth.")))
+		if !a.Supported() {
+			spec.rows = append(spec.rows, text(stWarn.Render("This auth mode is not supported; the request will not be sent.")))
+			break
+		}
+		if a.Options == nil {
+			a.Options = map[string]string{}
+		}
+		keys := make([]string, 0, len(a.Options))
+		for key := range a.Options {
+			keys = append(keys, key)
+		}
+		for key := range authDefaults(a.Mode) {
+			if !slices.Contains(keys, key) {
+				keys = append(keys, key)
+			}
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			shown := a.Options[key]
+			secret := runner.LooksSecret(key)
+			if secret && !m.reveal && !strings.Contains(shown, "{{") && shown != "" {
+				shown = "••••••"
+			}
+			spec.rows = append(spec.rows, row{line: key + "  " + markVars(shown), sel: true, what: key, edit: func() tea.Cmd {
+				value := a.Options[key]
+				f := textField(key, value)
+				if secret {
+					f = secretField(key, value, !m.reveal)
+				}
+				if value == "true" || value == "false" {
+					f = choiceField(key, []string{"true", "false"}, value)
+				}
+				return m.openForm("Auth "+key, "", []*field{f}, 0, func(values []string) tea.Cmd { a.Options[key] = values[0]; onChange(); return nil })
+			}})
+		}
 	}
 	return spec
+}
+
+func authDefaults(mode string) map[string]string {
+	options := map[string]string{}
+	keys := map[string][]string{
+		"digest": {"username", "password"}, "ntlm": {"username", "password", "domain"}, "wsse": {"username", "password"},
+		"oauth1":          {"consumerKey", "consumerSecret", "accessToken", "accessTokenSecret", "signatureMethod", "privateKey", "privateKeyType", "placement"},
+		"oauth2":          {"flow", "accessTokenUrl", "authorizationUrl", "callbackUrl", "credentials.clientId", "credentials.clientSecret", "scope"},
+		"awsv4":           {"accessKeyId", "secretAccessKey", "sessionToken", "region", "service", "profileName"},
+		"akamai-edgegrid": {"clientToken", "clientSecret", "accessToken", "headersToSign"},
+	}
+	for _, key := range keys[mode] {
+		options[key] = ""
+	}
+	if mode == "oauth1" {
+		options["signatureMethod"] = "HMAC-SHA1"
+		options["placement"] = "header"
+	}
+	if mode == "oauth2" {
+		options["flow"] = "client_credentials"
+	}
+	return options
 }
 
 func (m *Model) actionForm(title string, name, expr string, focus int, apply func(name, expr string)) tea.Cmd {

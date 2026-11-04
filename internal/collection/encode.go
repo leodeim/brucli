@@ -210,9 +210,14 @@ func bodyNode(b Body) *yaml.Node {
 
 func authNode(a Auth) *yaml.Node {
 	if a.raw != nil {
-		return a.raw
+		if !a.Supported() {
+			return a.raw
+		}
 	}
 	n := mapping()
+	if a.raw != nil {
+		n = deepCopy(a.raw)
+	}
 	switch a.Mode {
 	case "", "none":
 		return nil
@@ -231,6 +236,25 @@ func authNode(a Auth) *yaml.Node {
 		add(n, "value", scalar(a.Value))
 		if a.Placement != "" {
 			add(n, "placement", scalar(a.Placement))
+		}
+	default:
+		set(n, "type", scalar(a.Mode), nil)
+		keys := make([]string, 0, len(a.Options))
+		for key := range a.Options {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			parts := strings.Split(key, ".")
+			target := n
+			for _, part := range parts[:len(parts)-1] {
+				target = child(target, part, nil)
+			}
+			value := scalar(a.Options[key])
+			if i := lookup(target, parts[len(parts)-1]); i >= 0 {
+				value.Tag = target.Content[i+1].Tag
+			}
+			set(target, parts[len(parts)-1], value, nil)
 		}
 	}
 	return n

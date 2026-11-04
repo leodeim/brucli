@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/youmark/pkcs8"
@@ -81,12 +82,42 @@ func (s *Session) ConfigureTransport(options TransportOptions) error {
 // Each redirect passes through this transport again, selecting certificates
 // and proxy bypass rules for the destination host.
 type requestTransport struct {
-	base    *http.Transport
-	session *Session
-	scope   *vars.Scope
+	base       *http.Transport
+	session    *Session
+	scope      *vars.Scope
+	mu         sync.Mutex
+	transports map[string]*http.Transport
 }
 
 func (t *requestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	if t.transports == nil {
+		t.transports = map[string]*http.Transport{}
+	}
+	key := req.URL.Scheme + "://" + req.URL.Host
+	transport := t.transports[key]
+	if transport == nil {
+		var err error
+		transport, err = t.makeTransport(req)
+		if err != nil {
+			t.mu.Unlock()
+			return nil, err
+		}
+		t.transports[key] = transport
+	}
+	t.mu.Unlock()
+	return transport.RoundTrip(req)
+}
+
+func (t *requestTransport) CloseIdleConnections() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, transport := range t.transports {
+		transport.CloseIdleConnections()
+	}
+}
+
+func (t *requestTransport) makeTransport(req *http.Request) (*http.Transport, error) {
 	transport := t.base.Clone()
 	if err := t.configureProxy(transport); err != nil {
 		return nil, err
@@ -123,24 +154,22 @@ func (t *requestTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		}
 		return secure, nil
 	}
-	response, err := transport.RoundTrip(req)
-	if err != nil {
-		transport.CloseIdleConnections()
-		return nil, err
+	return transport, nil
+}
+
+func (s *Session) clientForScope(scope *vars.Scope) (*http.Client, func(), error) {
+	client := *s.Client
+	proxy := s.Collection.Config.Proxy
+	if s.Transport.ProxyURL != "" || s.Transport.NoProxy || s.rootCAs != nil || len(s.Transport.Certificates) > 0 || len(s.Collection.Config.ClientCertificates) > 0 || proxy.Disabled || proxy.Config.Hostname != "" {
+		base, ok := client.Transport.(*http.Transport)
+		if !ok {
+			return nil, nil, errors.New("transport configuration requires an HTTP transport")
+		}
+		transport := &requestTransport{base: base, session: s, scope: scope}
+		client.Transport = transport
+		return &client, transport.CloseIdleConnections, nil
 	}
-	response.Body = &transportBody{ReadCloser: response.Body, transport: transport}
-	return response, nil
-}
-
-type transportBody struct {
-	io.ReadCloser
-	transport *http.Transport
-}
-
-func (b *transportBody) Close() error {
-	err := b.ReadCloser.Close()
-	b.transport.CloseIdleConnections()
-	return err
+	return &client, func() {}, nil
 }
 
 func (t *requestTransport) configureProxy(transport *http.Transport) error {

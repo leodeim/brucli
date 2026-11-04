@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -85,6 +86,7 @@ type Param struct {
 
 // Auth is a request's or folder's authentication. Mode "inherit" defers to the parent.
 type Auth struct {
+	Options map[string]string
 	// Mode is inherit, none, basic, bearer, apikey, or another Bruno mode brucli cannot send (kept as written).
 	Mode     string
 	Username string
@@ -100,10 +102,28 @@ type Auth struct {
 // Supported reports whether brucli can apply this auth mode.
 func (a Auth) Supported() bool {
 	switch a.Mode {
-	case "inherit", "none", "basic", "bearer", "apikey":
+	case "inherit", "none", "basic", "bearer", "apikey", "digest", "ntlm", "awsv4", "oauth1", "oauth2", "wsse", "akamai-edgegrid":
 		return true
 	}
 	return false
+}
+
+// Option accepts both YAML's camelCase fields and the legacy .bru snake_case fields.
+func (a Auth) Option(names ...string) string {
+	for _, name := range names {
+		if value, ok := a.Options[name]; ok {
+			return value
+		}
+	}
+	normalize := func(value string) string { return strings.ToLower(strings.ReplaceAll(value, "_", "")) }
+	for _, name := range names {
+		for key, value := range a.Options {
+			if normalize(key) == normalize(name) {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 // Body is a request body. Raw modes keep Data; form modes keep Form.
@@ -196,6 +216,7 @@ func (r *Request) Clone() *Request {
 	c.Actions = slices.Clone(r.Actions)
 	c.Assertions = slices.Clone(r.Assertions)
 	c.Body.Form = slices.Clone(r.Body.Form)
+	c.Auth.Options = maps.Clone(r.Auth.Options)
 	return &c
 }
 

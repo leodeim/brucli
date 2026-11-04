@@ -275,7 +275,23 @@ func decodeAuth(n *yaml.Node) Auth {
 		Mode: raw.Type, Username: raw.Username, Password: raw.Password, Token: raw.Token,
 		Key: raw.Key, Value: raw.Value, Placement: raw.Placement,
 	}
-	if !a.Supported() {
+	a.Options = map[string]string{}
+	var flatten func(*yaml.Node, string)
+	flatten = func(node *yaml.Node, prefix string) {
+		if node.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				key := node.Content[i].Value
+				if prefix != "" {
+					key = prefix + "." + key
+				}
+				flatten(node.Content[i+1], key)
+			}
+		} else if node.Kind == yaml.ScalarNode && prefix != "type" {
+			a.Options[prefix] = node.Value
+		}
+	}
+	flatten(n, "")
+	if !a.Supported() || a.Mode != "basic" && a.Mode != "bearer" && a.Mode != "apikey" && a.Mode != "none" && a.Mode != "inherit" {
 		a.raw = n
 	}
 	return a

@@ -105,6 +105,35 @@ func (r *Request) bruBlocks() map[string]string {
 				}
 			}
 		}
+		if r.Auth.Mode == "oauth2" {
+			pairs = nil
+			for _, field := range []struct {
+				key   string
+				names []string
+			}{
+				{"grant_type", []string{"flow", "grantType"}}, {"access_token_url", []string{"accessTokenUrl"}}, {"refresh_token_url", []string{"refreshTokenUrl"}},
+				{"client_id", []string{"credentials.clientId", "clientId"}}, {"client_secret", []string{"credentials.clientSecret", "clientSecret"}}, {"scope", []string{"scope"}},
+				{"username", []string{"resourceOwner.username", "username"}}, {"password", []string{"resourceOwner.password", "password"}},
+				{"callback_url", []string{"callbackUrl"}}, {"authorization_url", []string{"authorizationUrl"}},
+				{"state", []string{"state"}}, {"token_query_key", []string{"tokenConfig.placement.query", "tokenQueryKey"}}, {"token_header_prefix", []string{"tokenConfig.placement.header", "tokenHeaderPrefix"}},
+				{"credentials_id", []string{"tokenConfig.id", "credentialsId"}}, {"token_placement", []string{"tokenPlacement"}}, {"token_source", []string{"tokenSource"}}, {"access_token", []string{"accessToken"}},
+				{"credentials_placement", []string{"credentials.placement", "credentialsPlacement"}}, {"auto_fetch_token", []string{"settings.autoFetchToken", "autoFetchToken"}}, {"auto_refresh_token", []string{"settings.autoRefreshToken", "autoRefreshToken"}},
+			} {
+				value := r.Auth.Option(field.names...)
+				if field.key == "grant_type" && value == "resource_owner_password_credentials" {
+					value = "password"
+				}
+				if value != "" {
+					pairs = append(pairs, bruPair{name: field.key, value: value, enabled: true})
+				}
+			}
+			if r.Auth.Option("pkce") == "true" || r.Auth.Option("pkce.method") == "S256" {
+				pairs = append(pairs, bruPair{name: "pkce", value: "true", enabled: true})
+			}
+			if r.Auth.Option("tokenConfig.placement.query") != "" {
+				pairs = append(pairs, bruPair{name: "token_placement", value: "query", enabled: true})
+			}
+		}
 		blocks["auth:"+r.Auth.Mode] = bruDictionary(pairs)
 	}
 	if r.Body.Mode != "" && r.Body.Mode != "none" {

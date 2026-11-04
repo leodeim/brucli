@@ -141,6 +141,7 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		}
 	}
 	s := runner.NewSession(c, env, o.insecure)
+	s.Interactive = !headless
 	if err := s.ConfigureTransport(o.transport); err != nil {
 		return 2, err
 	}

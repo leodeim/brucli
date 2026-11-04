@@ -23,6 +23,7 @@ import (
 	"github.com/leodeim/brucli/internal/collection"
 	"github.com/leodeim/brucli/internal/script"
 	"github.com/leodeim/brucli/internal/vars"
+	"golang.org/x/oauth2"
 )
 
 // DefaultTimeout applies when a request has no timeout setting.
@@ -43,10 +44,13 @@ type Session struct {
 	Secrets map[string]map[string]string
 	Runtime map[string]any
 	// Process is process.env: the OS environment overlaid by the collection's .env.
-	Process   map[string]string
-	Client    *http.Client
-	Transport TransportOptions
-	rootCAs   *x509.CertPool
+	Process     map[string]string
+	Client      *http.Client
+	Transport   TransportOptions
+	rootCAs     *x509.CertPool
+	tokens      map[string]*oauth2.Token
+	Interactive bool
+	OpenBrowser func(string) error
 }
 
 // NewSession starts a session on c with environment env (may be nil).
@@ -71,6 +75,7 @@ func NewSession(c *collection.Collection, env *collection.Environment, insecure 
 		Runtime:    map[string]any{},
 		Process:    process,
 		Client:     &http.Client{Transport: transport, Jar: jar},
+		tokens:     map[string]*oauth2.Token{},
 	}
 }
 
@@ -85,6 +90,7 @@ func (s *Session) Fork() *Session {
 	}
 	f.Overrides = maps.Clone(s.Overrides)
 	f.Runtime = deepCopy(s.Runtime).(map[string]any)
+	f.tokens = maps.Clone(s.tokens)
 	f.Secrets = map[string]map[string]string{}
 	for env, vals := range s.Secrets {
 		f.Secrets[env] = maps.Clone(vals)
@@ -116,6 +122,7 @@ func deepCopy(v any) any {
 // and -env-var overrides a script replaced.
 func (s *Session) Adopt(f *Session) {
 	s.Runtime = f.Runtime
+	s.tokens = f.tokens
 	s.Secrets = f.Secrets
 	s.Overrides = f.Overrides
 	if s.Env != nil && f.Env != nil && s.Env.Path == f.Env.Path {
@@ -288,7 +295,12 @@ func (s *Session) Execute(ctx context.Context, r *collection.Request) *Result {
 		s.finish(sc, res)
 		return res
 	}
-	res.Response, res.Err = s.send(ctx, sent, r.Settings, res)
+	if err := s.prepareAuth(ctx, r, sent, scope); err != nil {
+		res.Err = err
+		s.finish(sc, res)
+		return res
+	}
+	res.Response, res.Err = s.send(ctx, sent, r.Settings, res, scope)
 	if res.Err != nil {
 		s.finish(sc, res)
 		return res
@@ -427,7 +439,7 @@ func (s *Session) draft(r *collection.Request, chain []*collection.Folder, res *
 	// Like Bruno, bearer and API key auth are set before the scripts run, so scripts see and may
 	// override them; basic auth is applied last (finalize) and always wins.
 	switch auth, _ := EffectiveAuth(r); auth.Mode {
-	case "none", "basic":
+	case "none", "basic", "digest", "ntlm", "oauth1", "oauth2", "awsv4", "wsse", "akamai-edgegrid":
 	case "bearer":
 		d.SetHeader("Authorization", "Bearer "+auth.Token)
 	case "apikey":
@@ -441,7 +453,7 @@ func (s *Session) draft(r *collection.Request, chain []*collection.Folder, res *
 			d.SetHeader(auth.Key, auth.Value)
 		}
 	default:
-		res.Warnings = append(res.Warnings, fmt.Sprintf("auth %q is not supported; sent without auth", auth.Mode))
+		res.Warnings = append(res.Warnings, fmt.Sprintf("auth %q is not supported; request will not be sent", auth.Mode))
 	}
 	switch r.Body.Mode {
 	case "json", "text", "xml", "sparql", "graphql":
@@ -623,7 +635,7 @@ func encodeComponent(s string) string {
 	return b.String()
 }
 
-func (s *Session) send(ctx context.Context, sent *script.Request, settings collection.Settings, res *Result) (*script.Response, error) {
+func (s *Session) send(ctx context.Context, sent *script.Request, settings collection.Settings, res *Result, scope *vars.Scope) (*script.Response, error) {
 	timeout := sent.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
@@ -644,16 +656,44 @@ func (s *Session) send(ctx context.Context, sent *script.Request, settings colle
 	if v, ok := sent.Header("Host"); ok {
 		req.Host = v
 	}
-	client := *s.Client
-	proxy := s.Collection.Config.Proxy
-	if s.Transport.ProxyURL != "" || s.Transport.NoProxy || s.rootCAs != nil || len(s.Transport.Certificates) > 0 || len(s.Collection.Config.ClientCertificates) > 0 || proxy.Disabled || proxy.Config.Hostname != "" {
-		base, ok := client.Transport.(*http.Transport)
-		if !ok {
-			return nil, errors.New("transport configuration requires an HTTP transport")
-		}
-		client.Transport = &requestTransport{base: base, session: s, scope: s.Scope(res.Request)}
+	client, cleanup, err := s.clientForScope(scope)
+	if err != nil {
+		return nil, err
 	}
-	client.CheckRedirect = func(_ *http.Request, via []*http.Request) error {
+	defer cleanup()
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	authorized, err := s.authTransport(ctx, res.Request, req, base, scope)
+	if err != nil {
+		return nil, err
+	}
+	if signer, ok := authorized.(signingTransport); ok {
+		recorded := false
+		signer.record = func(actual *http.Request) {
+			if recorded {
+				return
+			}
+			recorded = true
+			sent.URL = actual.URL.String()
+			for name, values := range actual.Header {
+				if len(values) > 0 {
+					sent.SetHeader(name, strings.Join(values, ", "))
+				}
+			}
+			if body, err := requestBody(actual); err == nil {
+				sent.Body = string(body)
+			}
+		}
+		authorized = signer
+	}
+	client.Transport = originAuthTransport{base: base, authorized: authorized, origin: req.URL}
+	client.CheckRedirect = func(redirect *http.Request, via []*http.Request) error {
+		if !sameOrigin(redirect.URL, req.URL) {
+			redirect.Header.Del("Authorization")
+			redirect.Header.Del("X-WSSE")
+		}
 		switch {
 		case !settings.FollowRedirects || settings.MaxRedirects <= 0:
 			return http.ErrUseLastResponse
@@ -734,10 +774,15 @@ func (s *Session) Mask(r *collection.Request, sent *script.Request) *script.Requ
 		}
 	}
 	if r != nil {
-		if a, _ := EffectiveAuth(r); a.Mode == "basic" || a.Mode == "bearer" || a.Mode == "apikey" {
+		if a, _ := EffectiveAuth(r); a.Mode != "none" {
 			note(a.Password)
 			note(a.Token)
 			note(a.Value)
+			for key, value := range a.Options {
+				if LooksSecret(key) {
+					note(value)
+				}
+			}
 		}
 	}
 	if s.Env != nil {
@@ -772,7 +817,7 @@ func (s *Session) Mask(r *collection.Request, sent *script.Request) *script.Requ
 				scheme = ""
 			}
 			c.Headers[i].Value = strings.TrimSpace(scheme + " ****")
-		case "cookie":
+		case "cookie", "x-wsse":
 			c.Headers[i].Value = "****"
 		default:
 			c.Headers[i].Value = hide(h.Value)
