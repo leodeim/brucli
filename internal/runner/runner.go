@@ -5,6 +5,7 @@ package runner
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -42,8 +43,10 @@ type Session struct {
 	Secrets map[string]map[string]string
 	Runtime map[string]any
 	// Process is process.env: the OS environment overlaid by the collection's .env.
-	Process map[string]string
-	Client  *http.Client
+	Process   map[string]string
+	Client    *http.Client
+	Transport TransportOptions
+	rootCAs   *x509.CertPool
 }
 
 // NewSession starts a session on c with environment env (may be nil).
@@ -642,6 +645,14 @@ func (s *Session) send(ctx context.Context, sent *script.Request, settings colle
 		req.Host = v
 	}
 	client := *s.Client
+	proxy := s.Collection.Config.Proxy
+	if s.Transport.ProxyURL != "" || s.Transport.NoProxy || s.rootCAs != nil || len(s.Transport.Certificates) > 0 || len(s.Collection.Config.ClientCertificates) > 0 || proxy.Disabled || proxy.Config.Hostname != "" {
+		base, ok := client.Transport.(*http.Transport)
+		if !ok {
+			return nil, errors.New("transport configuration requires an HTTP transport")
+		}
+		client.Transport = &requestTransport{base: base, session: s, scope: s.Scope(res.Request)}
+	}
 	client.CheckRedirect = func(_ *http.Request, via []*http.Request) error {
 		switch {
 		case !settings.FollowRedirects || settings.MaxRedirects <= 0:

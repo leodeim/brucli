@@ -14,7 +14,8 @@ import (
 var errUnsupported = errors.New("unsupported item type")
 
 type rawCollection struct {
-	Info struct {
+	Config Config `yaml:"config"`
+	Info   struct {
 		Name string `yaml:"name"`
 	} `yaml:"info"`
 	Request    rawDefaults `yaml:"request"`

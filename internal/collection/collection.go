@@ -33,6 +33,7 @@ type Collection struct {
 	Environments       []*Environment
 	GlobalEnvironments []*Environment
 	WorkspaceDir       string
+	Config             Config
 	// DotEnv is the collection's .env file, exposed to requests as {{process.env.NAME}}.
 	DotEnv map[string]string
 	// Warnings lists files that were skipped while loading.
@@ -260,9 +261,10 @@ func Load(dir string) (*Collection, error) {
 		return nil, fmt.Errorf("%s: %w", collectionFile, err)
 	}
 	c := &Collection{
-		Name: cmp.Or(raw.Info.Name, filepath.Base(dir)),
-		Dir:  dir,
-		Docs: docsText(&raw.Docs),
+		Name:   cmp.Or(raw.Info.Name, filepath.Base(dir)),
+		Dir:    dir,
+		Docs:   docsText(&raw.Docs),
+		Config: raw.Config,
 	}
 	c.Root = &Folder{Name: c.Name, Dir: dir, Defaults: raw.Request.defaults(), Docs: c.Docs}
 

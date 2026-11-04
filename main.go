@@ -52,6 +52,7 @@ type options struct {
 	tags      string
 	exclude   string
 	folder    string
+	transport runner.TransportOptions
 }
 
 func parse(args []string, headless bool, stderr io.Writer) (*options, error) {
@@ -66,6 +67,10 @@ func parse(args []string, headless bool, stderr io.Writer) (*options, error) {
 	fs.StringVar(&o.globalEnv, "global-env", "", "workspace environment to use")
 	fs.Var(o.vars, "env-var", "override an environment variable, name=value (repeatable)")
 	fs.BoolVar(&o.insecure, "insecure", false, "skip TLS certificate verification")
+	fs.StringVar(&o.transport.ProxyURL, "proxy", "", "proxy URL (HTTP, HTTPS, SOCKS4 or SOCKS5)")
+	fs.BoolVar(&o.transport.NoProxy, "noproxy", false, "disable collection and environment proxies")
+	fs.StringVar(&o.transport.CACert, "cacert", "", "PEM file containing trusted CA certificates")
+	fs.StringVar(&o.transport.ClientCertConfig, "client-cert-config", "", "JSON client certificate configuration file")
 	if !headless {
 		fs.BoolVar(&o.noMouse, "no-mouse", false, "leave the mouse to the terminal (text selection) instead of clicks and scrolling")
 	}
@@ -136,6 +141,9 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		}
 	}
 	s := runner.NewSession(c, env, o.insecure)
+	if err := s.ConfigureTransport(o.transport); err != nil {
+		return 2, err
+	}
 	if o.globalEnv != "" {
 		s.GlobalEnv = c.GlobalEnvironment(o.globalEnv)
 		if s.GlobalEnv == nil {
