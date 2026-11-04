@@ -17,7 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        # macos-latest uses ARM runners, whose capacity has blocked releases.
+        os: [macos-15-intel, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out source
