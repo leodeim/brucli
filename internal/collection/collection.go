@@ -28,9 +28,11 @@ type Collection struct {
 	Name string
 	Dir  string
 	// Root is the collection itself: its Defaults are the collection-level headers, auth, variables and scripts.
-	Root         *Folder
-	Docs         string
-	Environments []*Environment
+	Root               *Folder
+	Docs               string
+	Environments       []*Environment
+	GlobalEnvironments []*Environment
+	WorkspaceDir       string
 	// DotEnv is the collection's .env file, exposed to requests as {{process.env.NAME}}.
 	DotEnv map[string]string
 	// Warnings lists files that were skipped while loading.
@@ -272,6 +274,9 @@ func Load(dir string) (*Collection, error) {
 		return nil, err
 	}
 	if err := c.loadEnvironments(); err != nil {
+		return nil, err
+	}
+	if err := c.loadGlobalEnvironments(); err != nil {
 		return nil, err
 	}
 	c.DotEnv, err = readDotEnv(filepath.Join(dir, dotEnvFile))

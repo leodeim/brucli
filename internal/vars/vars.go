@@ -20,6 +20,7 @@ type Source string
 
 // Scopes from lowest to highest precedence, plus process.env which is only reachable by its prefix.
 const (
+	Global      Source = "global"
 	Collection  Source = "collection"
 	Environment Source = "environment"
 	Folder      Source = "folder"
@@ -32,6 +33,7 @@ const processPrefix = "process.env."
 
 // Scope holds the variables visible to one request.
 type Scope struct {
+	Global      map[string]string
 	Collection  map[string]string
 	Environment map[string]string
 	Folder      map[string]string
@@ -106,7 +108,7 @@ type layer struct {
 
 // layers lists the string scopes from highest to lowest precedence.
 func (s *Scope) layers() []layer {
-	return []layer{{Request, s.Request}, {Folder, s.Folder}, {Environment, s.Environment}, {Collection, s.Collection}}
+	return []layer{{Request, s.Request}, {Folder, s.Folder}, {Environment, s.Environment}, {Collection, s.Collection}, {Global, s.Global}}
 }
 
 // All lists every variable once, by the scope that wins, sorted by name.

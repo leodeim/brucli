@@ -43,14 +43,15 @@ func (e envVars) Set(v string) error {
 }
 
 type options struct {
-	dir      string
-	env      string
-	vars     envVars
-	insecure bool
-	noMouse  bool
-	tags     string
-	exclude  string
-	folder   string
+	dir       string
+	env       string
+	globalEnv string
+	vars      envVars
+	insecure  bool
+	noMouse   bool
+	tags      string
+	exclude   string
+	folder    string
 }
 
 func parse(args []string, headless bool, stderr io.Writer) (*options, error) {
@@ -62,6 +63,7 @@ func parse(args []string, headless bool, stderr io.Writer) (*options, error) {
 	fs.SetOutput(stderr)
 	o := &options{vars: envVars{}}
 	fs.StringVar(&o.env, "env", "", "environment to use (a file name in environments/)")
+	fs.StringVar(&o.globalEnv, "global-env", "", "workspace environment to use")
 	fs.Var(o.vars, "env-var", "override an environment variable, name=value (repeatable)")
 	fs.BoolVar(&o.insecure, "insecure", false, "skip TLS certificate verification")
 	if !headless {
@@ -134,6 +136,12 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		}
 	}
 	s := runner.NewSession(c, env, o.insecure)
+	if o.globalEnv != "" {
+		s.GlobalEnv = c.GlobalEnvironment(o.globalEnv)
+		if s.GlobalEnv == nil {
+			return 2, fmt.Errorf("no global environment %q in workspace %s", o.globalEnv, c.WorkspaceDir)
+		}
+	}
 	s.Overrides = o.vars
 	if !headless {
 		m := tui.New(tui.Config{Session: s, Editor: cmp.Or(os.Getenv("VISUAL"), os.Getenv("EDITOR")), Mouse: !o.noMouse})

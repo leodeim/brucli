@@ -34,7 +34,8 @@ const maxBody = 64 << 20
 type Session struct {
 	Collection *collection.Collection
 	// Env is the active environment, or nil for none.
-	Env *collection.Environment
+	Env       *collection.Environment
+	GlobalEnv *collection.Environment
 	// Overrides win over the environment's own values, like bru run --env-var.
 	Overrides map[string]string
 	// Secrets hold secret environment values by environment and variable name; they never reach a file.
@@ -75,6 +76,9 @@ func (s *Session) Fork() *Session {
 	f := *s
 	if s.Env != nil {
 		f.Env = s.Env.Clone()
+	}
+	if s.GlobalEnv != nil {
+		f.GlobalEnv = s.GlobalEnv.Clone()
 	}
 	f.Overrides = maps.Clone(s.Overrides)
 	f.Runtime = deepCopy(s.Runtime).(map[string]any)
@@ -119,12 +123,20 @@ func (s *Session) Adopt(f *Session) {
 // Scope builds the variables one request sees.
 func (s *Session) Scope(r *collection.Request) *vars.Scope {
 	scope := &vars.Scope{
+		Global:      map[string]string{},
 		Collection:  enabled(s.Collection.Root.Defaults.Vars),
 		Environment: s.envVars(),
 		Folder:      map[string]string{},
 		Request:     map[string]string{},
 		Runtime:     s.Runtime,
 		Process:     s.Process,
+	}
+	if s.GlobalEnv != nil {
+		for _, value := range s.GlobalEnv.Vars {
+			if value.Enabled && !value.Secret {
+				scope.Global[value.Name] = value.Value
+			}
+		}
 	}
 	if r != nil {
 		for _, f := range r.Chain()[1:] {

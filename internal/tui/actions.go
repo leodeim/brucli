@@ -212,6 +212,7 @@ func buildActions() []*action {
 			when: func(m *Model) bool { r := m.results[m.current]; return r != nil && r.Response != nil }, do: (*Model).copyBody},
 
 		{menu: "Environment", name: "Choose environment…", keys: []string{"e"}, do: (*Model).pickEnv},
+		{menu: "Environment", name: "Choose global environment…", do: (*Model).pickGlobalEnv},
 		{menu: "Environment", name: "Edit environment", keys: []string{"E"},
 			when: func(m *Model) bool { return m.s.Env != nil }, do: (*Model).openEnvEditor},
 		{menu: "Environment", name: "Variables in scope", keys: []string{"v"}, do: (*Model).openVars},

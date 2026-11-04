@@ -86,6 +86,27 @@ func (m *Model) pickEnv() tea.Cmd {
 	})
 }
 
+func (m *Model) pickGlobalEnv() tea.Cmd {
+	items := []pickItem{{label: "No global environment"}}
+	for _, env := range m.c.GlobalEnvironments {
+		items = append(items, pickItem{label: env.Name})
+	}
+	current := 0
+	if m.s.GlobalEnv != nil {
+		current = slices.IndexFunc(m.c.GlobalEnvironments, func(env *collection.Environment) bool { return env.Path == m.s.GlobalEnv.Path }) + 1
+	}
+	return m.choose("Global environment", items, current, func(i int) tea.Cmd {
+		m.s.GlobalEnv = nil
+		if i > 0 {
+			m.s.GlobalEnv = m.c.GlobalEnvironments[i-1]
+			m.setStatus(nil, "global environment %s", m.s.GlobalEnv.Name)
+		} else {
+			m.setStatus(nil, "no global environment")
+		}
+		return nil
+	})
+}
+
 func (m *Model) openEnvEditor() tea.Cmd {
 	if m.s.Env == nil {
 		m.setStatus(errors.New("e picks one"), "no environment selected")
@@ -322,7 +343,7 @@ func (v *varsModal) view(m *Model, w, h int) string {
 		title += " for " + m.current.Name
 	}
 	lines, v.start = listView(lines, v.cursor, h-10)
-	lines = append(lines, "", stMuted.Render("precedence: runtime > request > folder > environment > collection · {{process.env.X}} reads .env"))
+	lines = append(lines, "", stMuted.Render("precedence: runtime > request > folder > environment > collection > global · {{process.env.X}} reads .env"))
 	return box(title, lines, modalWidth(w))
 }
 
