@@ -30,6 +30,10 @@
 
 brucli reads and writes OpenCollection YAML and `.bru` collections used by [Bruno](https://www.usebruno.com). It saves edits in the collection's original format.
 
+<p align="center">
+  <img src="misc/screenshot.png" alt="brucli terminal interface showing a collection, request parameters, and a JSON response" width="700">
+</p>
+
 ## Install
 
 Install the latest release on macOS or Linux:
