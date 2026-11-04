@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A terminal client for Bruno collections.</strong><br>
-  Browse, edit and send the requests of a Bruno YAML collection, or run them headless in CI.
+  Browse, edit and send requests from Bruno collections, or run them headless in CI.
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@
   <a href="https://buymeacoffee.com/leodeim"><img src="https://img.shields.io/badge/Buy_Me_a_Coffee-Support_My_Work-yellow?logo=buymeacoffee" alt="Buy me a coffee"></a>
 </p>
 
-brucli reads and writes the same files as the [Bruno](https://www.usebruno.com) app (the YAML/OpenCollection format), so one collection works in both. brucli saves in Bruno's layout and quoting; an unchanged request comes out byte for byte the same.
+brucli reads and writes [Bruno](https://www.usebruno.com) collections in both OpenCollection YAML (`opencollection.yml`) and `.bru` (`bruno.json`) formats. Edits stay in the collection's original format, and unrecognized blocks stay in the file.
 
 ## Install
 
@@ -74,11 +74,13 @@ Press `?` to search every action and its key, or `F10` for the menus. You can al
 | Key | Action |
 | --- | --- |
 | `s` / `ctrl+r` | Send the request |
+| `s` while a WebSocket is connected | Compose and send another message |
 | `ctrl+s` | Save |
 | `Tab` | Switch pane |
 | `Enter` | Open a request, or edit the selected row |
 | `b` | Edit the body |
 | `u` / `m` | Edit the URL / pick the method |
+| `t` in the Body tab | Pick the body type or switch to GraphQL, gRPC or WebSocket |
 | `e` / `E` | Pick / edit the environment |
 | `R` | Run a folder |
 | `z` | Zoom the pane |
@@ -90,9 +92,36 @@ In the body editor, `Esc` leaves and keeps your changes, `ctrl+f` formats JSON a
 
 ## Bruno compatibility
 
-brucli handles variables in every scope (including `process.env` from `.env` and dynamic values like `{{$guid}}`), inherited headers and auth (basic, bearer, API key), pre-request and post-response scripts with Bruno's `req`, `res` and `bru` objects, post-response variables, assertions, and `test()` with a chai-style `expect`.
+| Feature | Support |
+| --- | --- |
+| Collections | Read, edit and run YAML and `.bru` collections, including folders and environments |
+| HTTP | JSON, text, XML, SPARQL, URL-encoded forms and multipart uploads |
+| GraphQL | GET and POST requests with query, variables and operation name |
+| gRPC | Unary, client streaming, server streaming and bidirectional streaming; server reflection or local `.proto` files |
+| WebSocket | Live connections, saved message variants, text, JSON and binary frames |
+| Variables | Global, collection, environment, folder, request and runtime scopes, `.env`, and dynamic values such as `{{$guid}}` |
+| Proxies | Collection settings, proxy environment variables, HTTP, HTTPS, SOCKS4 and SOCKS5 |
+| Client certificates | PEM and PKCS#12, encrypted private keys, domain matching and custom CAs |
 
-It does not handle `.bru` collections, GraphQL, gRPC or WebSocket requests, other auth modes, multipart bodies, `require()` or `bru.sendRequest` in scripts, global environments, proxies or client certificates. Unsupported parts of a file stay as they are.
+HTTP authentication supports basic, bearer, API key, Digest, NTLM, OAuth 1, OAuth 2, AWS SigV4, WSSE and Akamai EdgeGrid. Headers and auth inherit from the collection and folders. gRPC supports basic, bearer, API keys in metadata, and OAuth 2.
+
+Existing scripting support includes pre-request and post-response scripts with Bruno's `req`, `res` and `bru` objects, post-response variables, assertions, and `test()` with a chai-style `expect`. `require()` and `bru.sendRequest` are not implemented. gRPC lifecycle scripts are kept in the file but are not executed.
+
+### gRPC and WebSocket
+
+Create a request and choose gRPC or WebSocket from the Body type menu, or open an existing request. For gRPC, enter the method (for example, `/package.Service/Method`) and an optional collection-relative `.proto` path. Collection protobuf settings are also read; without local proto files, brucli uses server reflection. Use `grpc://` for plaintext and `grpcs://` for TLS.
+
+For WebSockets, `s` connects and sends the selected saved message. While connected, `s` opens a message composer and `Esc` disconnects. Binary messages use base64 data. Responses appear as they arrive.
+
+Headless runs receive one WebSocket response by default. `-stream-messages N` changes the count; `0` waits for the server to close. Streams default to a 60-second timeout in headless runs. Set `-stream-timeout 5m` to change it, or set the request's timeout. Retained responses are limited to 64 MiB or 10,000 messages.
+
+### Environments and connections
+
+Choose a workspace environment from the Environment menu or pass `-global-env NAME`. brucli finds workspace environments beside the nearest parent `workspace.yml`, `workspace.yaml` or `workspace.json`. Collection and request variables take precedence over global variables. Both environment editors keep secret values in memory.
+
+Collection proxy and certificate settings apply automatically. Use `-proxy URL` to override the proxy, `-noproxy` to bypass proxies, or `-cacert FILE` to add a trusted CA. `-client-cert-config FILE` reads [Bruno's certificate configuration JSON](https://docs.usebruno.com/bru-cli/proxyConfiguration). Certificate paths in collection settings are relative to the collection; paths in the CLI configuration are relative to that file.
+
+OAuth 2 supports client credentials, password credentials, authorization code with PKCE, and implicit flows. Browser login requires an HTTP callback on localhost or a loopback IP. Headless browser flows need a supplied access token; authorization-code flows also accept a supplied code. Tokens are cached and refreshed within the session.
 
 ## Development
 
