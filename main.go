@@ -76,6 +76,8 @@ func parse(args []string, headless bool, stderr io.Writer) (*options, error) {
 		fmt.Fprintf(stderr, "usage: %s [flags] [collection-dir]\n", name)
 		if !headless {
 			fmt.Fprintln(stderr, "       brucli run [flags] [collection-dir]   send requests without the UI, like bru run")
+			fmt.Fprintln(stderr, "       brucli update                       update to the latest release")
+			fmt.Fprintln(stderr, "       brucli --version                    print the version")
 		}
 		fs.PrintDefaults()
 	}
@@ -95,6 +97,21 @@ func parse(args []string, headless bool, stderr io.Writer) (*options, error) {
 }
 
 func run(args []string, stdout, stderr io.Writer) (int, error) {
+	if len(args) > 0 {
+		switch args[0] {
+		case "update":
+			return runUpdate(args[1:], stdout, stderr)
+		case "version", "--version", "-version":
+			if len(args) != 1 {
+				return 2, fmt.Errorf("unexpected argument %q", args[1])
+			}
+			_, err := fmt.Fprintln(stdout, "brucli", buildVersion())
+			if err != nil {
+				return 1, err
+			}
+			return 0, nil
+		}
+	}
 	headless := len(args) > 0 && args[0] == "run"
 	if headless {
 		args = args[1:]

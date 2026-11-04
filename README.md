@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="#install">Install</a> ·
+  <a href="#update">Update</a> ·
   <a href="#keys">Keys</a> ·
   <a href="#bruno-compatibility">Bruno compatibility</a> ·
   <a href="#support">Support</a>
@@ -47,6 +48,14 @@ You can also install with Go 1.26 or newer:
 ```sh
 go install github.com/leodeim/brucli@latest
 ```
+
+## Update
+
+```sh
+brucli update
+```
+
+Downloads the latest release for your OS and CPU, verifies its SHA-256 checksum, and replaces the installed binary. The install directory must be writable. Release binaries and Go installs from tagged releases support updates; development builds do not. Run `brucli --version` to check your version.
 
 ## Run
 
