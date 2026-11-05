@@ -231,26 +231,37 @@ func (m *Model) newRequestForm() tea.Cmd {
 	if n := m.tree.selected(); n != nil && n.req != nil {
 		f = n.req.Folder
 	}
-	fields := []*field{textField("Name", ""), choiceField("Method", methods, "GET"), textField("URL", "{{baseUrl}}/")}
-	return m.openForm("New request in "+m.folderName(f), "The file is created right away, named after the request.", fields, 0, func(v []string) tea.Cmd {
+	types := []string{"HTTP", "GraphQL", "gRPC", "WebSocket"}
+	fields := []*field{textField("Name", ""), choiceField("Type", types, "HTTP"), choiceField("HTTP method", methods, "GET"), textField("URL", "{{baseUrl}}/")}
+	return m.openForm("New request in "+m.folderName(f), "GraphQL uses POST by default. Set a gRPC method after creation. WebSocket uses GET.", fields, 0, func(v []string) tea.Cmd {
 		name := strings.TrimSpace(v[0])
 		if name == "" {
 			m.setStatus(errors.New("a name is required"), "no request created")
 			return nil
 		}
-		r, err := f.NewRequest(name, strings.TrimSpace(v[2]))
+		r, err := f.NewRequest(name, strings.TrimSpace(v[3]))
 		if err != nil {
 			m.setStatus(err, "creating %s", name)
 			return nil
 		}
-		r.Method = v[1]
+		r.Method = v[2]
 		syncParams(r)
-		if r.Method != "GET" || len(r.Params) > 0 {
-			if err := r.Save(); err != nil {
-				m.setStatus(err, "saving %s", name)
-			}
+		switch v[1] {
+		case "GraphQL":
+			r.Kind, r.Method, r.Body.Mode = "graphql", "POST", "graphql"
+		case "gRPC":
+			r.Kind, r.Method, r.Body.Mode = "grpc", "", "grpc"
+			r.Body.Messages = []collection.Message{{Title: "message 1", Type: "json", Data: "{}"}}
+		case "WebSocket":
+			r.Kind, r.Method, r.Body.Mode = "websocket", "GET", "websocket"
+			r.Body.Messages = []collection.Message{{Title: "message 1", Type: "json", Data: "{}"}}
 		}
+		saveErr := r.Save()
 		m.open(r)
+		if saveErr != nil {
+			m.setStatus(saveErr, "saving %s", name)
+			return nil
+		}
 		m.setStatus(nil, "created %s", m.rel(r.Path))
 		return nil
 	})
